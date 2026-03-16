@@ -41,12 +41,12 @@ else:
     if _use_pg:
         print("Using PostgreSQL database")
 
-# Render 등 소형 환경: pool 보수적 설정, pool_pre_ping으로 stale 연결 방지
+# 커넥션 풀: TimeoutError 방지를 위해 pool 확대, pool_pre_ping으로 stale 연결 방지
 _engine_kw: dict = {"echo": False, "connect_args": connect_args}
 if DATABASE_URL and "postgresql" in DATABASE_URL.lower():
     _engine_kw["pool_pre_ping"] = True
-    _engine_kw["pool_size"] = 2
-    _engine_kw["max_overflow"] = 5
+    _engine_kw["pool_size"] = 20
+    _engine_kw["max_overflow"] = 10
     _engine_kw["pool_recycle"] = 300
 engine = create_engine(DATABASE_URL, **_engine_kw)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
