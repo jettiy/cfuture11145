@@ -55,6 +55,7 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
         const res = await calendarAPI.getBoard(symbol || undefined, BOARD_HOURS_AHEAD, 'low')
         if (!alive) return
         const list = Array.isArray(res?.data) ? res.data : []
+        console.log('🔥백엔드 원본 데이터:', list)
         setMergedEvents(list.map(boardEventToMerged))
         setLastUpdatedAt(new Date().toISOString())
       } catch (e) {
@@ -75,24 +76,25 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
     }
   }, [symbol])
 
-  /** KST 기준 오늘 날짜(YYYY-MM-DD) — 우측 KST 시계와 동기화 */
-  const todayKST = getTodayKST()
-  /** KST 기준 이번 주 월~금 날짜 집합 */
-  const thisWeekSet = getThisWeekKSTSet()
+  /** [디버깅] KST 필터 임시 해제 — 원인 파악 후 복원 */
+  // const todayKST = getTodayKST()
+  // const thisWeekSet = getThisWeekKSTSet()
 
-  /** 오늘 일정: 이벤트의 KST 날짜가 'KST 기준 오늘'과 정확히 일치 + 미국 경제 지표만, 시간순 */
+  /** 오늘 일정: [임시] 필터 해제 — 전체 데이터 시간순 (원래: KST 오늘 + US 경제지표만) */
   const todayEvents = useMemo(() => {
-    return mergedEvents
-      .filter((e) => e.type === 'economic' && (e.country === 'US' || !e.country) && getKSTDateString(e.scheduledAt) === todayKST)
-      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-  }, [mergedEvents, todayKST])
+    return [...mergedEvents].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+    // return mergedEvents
+    //   .filter((e) => e.type === 'economic' && (e.country === 'US' || !e.country) && getKSTDateString(e.scheduledAt) === todayKST)
+    //   .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+  }, [mergedEvents])
 
-  /** 이번주 일정: KST 기준 이번 주 월요일~금요일에 해당하는 데이터만, 시간순 */
+  /** 이번주 일정: [임시] 필터 해제 — 전체 데이터 시간순 (원래: KST 이번주 월~금만) */
   const weekEvents = useMemo(() => {
-    return mergedEvents
-      .filter((e) => thisWeekSet.has(getKSTDateString(e.scheduledAt)))
-      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-  }, [mergedEvents, thisWeekSet])
+    return [...mergedEvents].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+    // return mergedEvents
+    //   .filter((e) => thisWeekSet.has(getKSTDateString(e.scheduledAt)))
+    //   .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+  }, [mergedEvents])
 
   const isReleased = (e: MergedEvent) => e.actualValue != null && String(e.actualValue).trim() !== ''
 

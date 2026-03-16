@@ -81,8 +81,29 @@ async def lifespan(app: FastAPI):
         print("[OK] In-process scheduler disabled (Cloudflare Cron will trigger jobs)")
     else:
         start_scheduler()
+
+    # 새 DB 연결 직후 스케줄러(15분) 전에 빈 DB 문제 방지: 시작 시 핀허브 캘린더/뉴스 1회 비동기 수집
+    print("[SYSTEM] Startup: Initial data fetch triggered")
+    asyncio.create_task(startup_initial_data_fetch())
+
     yield
     shutdown_scheduler()
+
+
+async def startup_initial_data_fetch():
+    """서버 기동 직후 백그라운드에서 캘린더·뉴스 1회 수집 (블로킹 없음)"""
+    try:
+        await asyncio.sleep(1)  # DB/엔진 준비 대기
+        from app.services.calendar_service import fetch_economic_calendar
+        from app.services.news_service import fetch_and_process_news
+        await fetch_economic_calendar()
+        await fetch_and_process_news()
+        print("[SYSTEM] Startup: Initial data fetch completed")
+    except Exception as e:
+        print(f"[SYSTEM] Startup: Initial data fetch error: {e}")
+        import traceback
+        traceback.print_exc()
+
 
 async def validate_api_key_connection_async():
     """백그라운드에서 API 키 연결 검증"""
