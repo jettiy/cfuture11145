@@ -119,7 +119,9 @@ async def get_economic_calendar(
     """
     Finnhub 경제 캘린더 API 호출.
     https://finnhub.io/api/v1/calendar/economic
-    from_date, to_date: YYYY-MM-DD. 기본값: 오늘 ~ 7일 후.
+    - 국가 필터: US만 요청 (무료 플랜 403 방지).
+    - 기간: 오늘 기준 전후 7일만 요청.
+    from_date, to_date: YYYY-MM-DD. 미지정 시 오늘-7일 ~ 오늘+7일.
     반환: EconomicCalendar에 upsert 가능한 dict 리스트 (scheduled_time은 datetime UTC).
     """
     api_key = os.getenv("FINNHUB_API_KEY", "") or FINNHUB_API_KEY
@@ -128,19 +130,30 @@ async def get_economic_calendar(
         print("[FINNHUB] FINNHUB_API_KEY not set, economic calendar skipped")
         return []
     now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
+    # 요청 범위: 오늘 기준 전후 7일만 (너무 먼 미래/과거 조회 시 403 가능)
     if not from_date:
-        from_date = now_utc.date().strftime("%Y-%m-%d")
+        from_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
     if not to_date:
-        to_date = (now_utc.date() + timedelta(days=7)).strftime("%Y-%m-%d")
+        to_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
+    # 국가 필터 최소화: US만 요청 (여러 country 시 403 발생 가능)
+    params = {"from": from_date, "to": to_date, "token": api_key.strip(), "country": "US"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                FINNHUB_ECONOMIC_CALENDAR_URL,
-                params={"from": from_date, "to": to_date, "token": api_key.strip()},
-            )
+            r = await client.get(FINNHUB_ECONOMIC_CALENDAR_URL, params=params)
             if r.status_code != 200:
-                logger.error("[FINNHUB] economic calendar HTTP status=%s body=%s", r.status_code, r.text[:300])
-                print(f"[FINNHUB] economic calendar HTTP error: status={r.status_code}")
+                body_preview = (r.text or "")[:400]
+                logger.error(
+                    "[FINNHUB] economic calendar HTTP status=%s body=%s",
+                    r.status_code,
+                    body_preview,
+                )
+                print(
+                    f"[FINNHUB] economic calendar HTTP error: status={r.status_code} (from={from_date} to={to_date} country=US). "
+                    f"Body: {body_preview}"
+                )
+                if r.status_code == 403:
+                    print("[FINNHUB] 403 Forbidden: free tier limit or invalid country/range. Using country=US and 7-day range only.")
                 return []
             data = r.json()
         raw_list = []
@@ -149,16 +162,42 @@ async def get_economic_calendar(
         elif isinstance(data, dict):
             raw_list = data.get("economicCalendar") or data.get("data") or data.get("events") or []
         if not raw_list:
-            logger.info("[FINNHUB] economic calendar empty for from=%s to=%s", from_date, to_date)
-            print(f"[FINNHUB] economic calendar empty for {from_date} to {to_date}")
+            top_keys = list(data.keys())[:10] if isinstance(data, dict) else "n/a"
+            logger.info(
+                "[FINNHUB] economic calendar API returned 200 but no events: from=%s to=%s country=US response_keys=%s",
+                from_date,
+                to_date,
+                top_keys,
+            )
+            print(
+                f"[FINNHUB] economic calendar empty: from={from_date} to={to_date} country=US. "
+                f"Response type={type(data).__name__} keys={top_keys if isinstance(data, dict) else 'list'}"
+            )
             return []
         normalized = []
         for item in raw_list:
             n = _normalize_economic_event(item)
             if n:
                 normalized.append(n)
-        logger.info("[FINNHUB] economic calendar from=%s to=%s raw=%s normalized=%s", from_date, to_date, len(raw_list), len(normalized))
-        print(f"[FINNHUB] economic calendar fetched: raw={len(raw_list)} normalized={len(normalized)}")
+        if not normalized:
+            logger.warning(
+                "[FINNHUB] economic calendar raw=%s but normalized=0 (parsing failed or all filtered): from=%s to=%s",
+                len(raw_list),
+                from_date,
+                to_date,
+            )
+            print(
+                f"[FINNHUB] economic calendar: API returned {len(raw_list)} raw events but 0 normalized (parsing/filter failed). from={from_date} to={to_date}"
+            )
+            return []
+        logger.info(
+            "[FINNHUB] economic calendar from=%s to=%s country=US raw=%s normalized=%s",
+            from_date,
+            to_date,
+            len(raw_list),
+            len(normalized),
+        )
+        print(f"[FINNHUB] economic calendar fetched: raw={len(raw_list)} normalized={len(normalized)} (country=US)")
         return normalized
     except httpx.RequestError as e:
         logger.exception("[FINNHUB] economic calendar request error: %s", e)

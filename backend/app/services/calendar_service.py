@@ -168,13 +168,16 @@ async def fetch_economic_calendar():
             try:
                 from app.services.finnhub_service import get_economic_calendar as fetch_finnhub_calendar
                 now_utc = datetime.now(timezone.utc)
-                from_date = now_utc.date().strftime("%Y-%m-%d")
-                to_date = (now_utc.date() + timedelta(days=7)).strftime("%Y-%m-%d")
-                logger.info("[CALENDAR] Finnhub fallback from=%s to=%s", from_date, to_date)
-                print(f"[CALENDAR] Finnhub fallback from={from_date} to={to_date}")
+                today = now_utc.date()
+                # 오늘 기준 전후 7일만 요청 (finnhub_service 내부 기본값과 동일)
+                from_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+                to_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
+                logger.info("[CALENDAR] Finnhub fallback from=%s to=%s (US only)", from_date, to_date)
+                print(f"[CALENDAR] Finnhub fallback from={from_date} to={to_date} (US only)")
                 items = await fetch_finnhub_calendar(from_date=from_date, to_date=to_date)
                 if not items:
-                    print("[CALENDAR] Finnhub returned no events")
+                    # 빈 결과 사유는 finnhub_service에서 상세 로그로 이미 출력됨 (403, empty response, parse fail 등)
+                    logger.info("[CALENDAR] Finnhub fallback returned no events; see [FINNHUB] logs above for reason")
                     return
                 upserted = 0
                 for it in items:
