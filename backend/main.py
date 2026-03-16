@@ -20,11 +20,11 @@ import asyncio
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup (테이블 미생성 시 /api/calendar/board 등이 빈 배열 반환할 수 있음)
     try:
         Base.metadata.create_all(bind=engine)
         # NOTE: Windows 기본 콘솔(cp949)에서는 ✓/✗ 같은 문자가 UnicodeEncodeError를 유발할 수 있어 ASCII로 출력합니다.
-        print("[OK] Database tables created successfully")
+        print("[OK] Database tables created successfully (Base.metadata.create_all executed)")
         if engine.dialect.name == "sqlite":
             run_sqlite_migrations(engine)
         run_postgres_rls(engine)

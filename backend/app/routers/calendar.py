@@ -361,4 +361,5 @@ async def get_calendar_board(
 
     merged.sort(key=lambda x: x.scheduled_at)
     logger.info("[CALENDAR API board] symbol=%s hours_ahead=%s merged_count=%s", symbol, hours_ahead, len(merged))
+    print(f"[DEBUG-3] 프론트로 보내는 최종 데이터 개수: {len(merged)}")
     return merged

@@ -238,6 +238,8 @@ async def fetch_economic_calendar():
                 db.commit()
                 logger.info("[CALENDAR] Finnhub upserted=%s", upserted)
                 print(f"[CALENDAR] Finnhub upserted={upserted}")
+                total_in_db = db.query(EconomicCalendar).count()
+                print(f"[DEBUG-2] 현재 DB에 저장된 총 지표 개수: {total_in_db}")
             except Exception as e:
                 logger.exception("[CALENDAR] Finnhub fallback error: %s", e)
                 print(f"[CALENDAR] Finnhub fallback error: {e}")

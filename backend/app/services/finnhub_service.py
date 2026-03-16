@@ -161,6 +161,7 @@ async def get_economic_calendar(
             raw_list = data
         elif isinstance(data, dict):
             raw_list = data.get("economicCalendar") or data.get("data") or data.get("events") or []
+        print(f"[DEBUG-1] Finnhub에서 받은 원본 데이터 개수: {len(raw_list)}")
         if not raw_list:
             top_keys = list(data.keys())[:10] if isinstance(data, dict) else "n/a"
             logger.info(
