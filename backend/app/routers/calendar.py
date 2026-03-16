@@ -295,32 +295,31 @@ async def get_calendar_board(
     """
     지표/일정 통합 보드: economic + custom 이벤트를 시간순 하나의 리스트로 반환.
     UTC 저장 / ISO 문자열로 반환. 프론트에서 로컬 표시.
+    [임시] 필터 전부 해제 — DB 전체 중 최근 50건씩 가져와 화면에 띄우기용.
     """
-    now_utc = datetime.now(timezone.utc)
-    end_utc = now_utc + timedelta(hours=hours_ahead)
+    total_in_db = db.query(EconomicCalendar).count()
+    print(f"[DEBUG-0] 현재 DB 안의 전체 지표 개수: {total_in_db}")
 
-    # Economic: 미발표, 구간 내, 중요도 필터
-    economic_events = db.query(EconomicCalendar).filter(
-        EconomicCalendar.scheduled_time >= now_utc,
-        EconomicCalendar.scheduled_time <= end_utc,
-        EconomicCalendar.is_released == False,
-        EconomicCalendar.importance.in_(_importance_set(importance)),
-    ).order_by(EconomicCalendar.scheduled_time.asc()).all()
-
-    # Custom: 활성, 구간 내, symbol 있으면 해당 심볼 또는 target_symbol null
-    custom_query = db.query(CustomEvent).filter(
-        CustomEvent.event_date >= now_utc,
-        CustomEvent.event_date <= end_utc,
-        CustomEvent.is_active == True,
+    # [임시] 모든 시간/조건 필터 해제 — 최근 날짜 기준 50개만 조회
+    # now_utc = datetime.now(timezone.utc)
+    # end_utc = now_utc + timedelta(hours=hours_ahead)
+    # Economic: 조건 없이 최근 scheduled_time 기준 50개
+    economic_events = (
+        db.query(EconomicCalendar)
+        .order_by(EconomicCalendar.scheduled_time.desc())
+        .limit(50)
+        .all()
     )
-    if symbol:
-        custom_query = custom_query.filter(
-            or_(
-                CustomEvent.target_symbol == symbol,
-                CustomEvent.target_symbol == None,
-            )
-        )
-    custom_events = custom_query.order_by(CustomEvent.event_date.asc()).all()
+    # 원래: .filter(scheduled_time >= now_utc, <= end_utc, is_released == False, importance.in_(...))
+
+    # Custom: 조건 없이 최근 event_date 기준 50개
+    custom_events = (
+        db.query(CustomEvent)
+        .order_by(CustomEvent.event_date.desc())
+        .limit(50)
+        .all()
+    )
+    # 원래: .filter(event_date >= now_utc, <= end_utc, is_active == True), symbol 필터
 
     merged: List[MergedEventResponse] = []
     for e in economic_events:
