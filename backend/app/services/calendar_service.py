@@ -1,6 +1,6 @@
 """
 경제 캘린더 데이터 수집 서비스
-소스: https://kr.investing.com/economic-calendar (스크래핑) → 실패 시 Finnhub 경제 캘린더 API
+소스: https://kr.investing.com/economic-calendar (스크래핑) → 실패 시 FMP 경제 캘린더 API
 """
 import re
 import logging
@@ -164,20 +164,18 @@ async def fetch_economic_calendar():
         cleanup_old_calendar(db)
         rows = await _fetch_investing_calendar_rows()
         if not rows:
-            print("[CALENDAR] No rows from Investing.com economic-calendar, using Finnhub economic calendar")
+            print("[CALENDAR] No rows from Investing.com economic-calendar, using FMP economic calendar")
             try:
-                from app.services.finnhub_service import get_economic_calendar as fetch_finnhub_calendar
+                from app.services.fmp_service import get_economic_calendar as fetch_fmp_calendar
                 now_utc = datetime.now(timezone.utc)
                 today = now_utc.date()
-                # 오늘 기준 전후 7일만 요청 (finnhub_service 내부 기본값과 동일)
                 from_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
                 to_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
-                logger.info("[CALENDAR] Finnhub fallback from=%s to=%s (US only)", from_date, to_date)
-                print(f"[CALENDAR] Finnhub fallback from={from_date} to={to_date} (US only)")
-                items = await fetch_finnhub_calendar(from_date=from_date, to_date=to_date)
+                logger.info("[CALENDAR] FMP fallback from=%s to=%s", from_date, to_date)
+                print(f"[CALENDAR] FMP fallback from={from_date} to={to_date}")
+                items = await fetch_fmp_calendar(from_date=from_date, to_date=to_date)
                 if not items:
-                    # 빈 결과 사유는 finnhub_service에서 상세 로그로 이미 출력됨 (403, empty response, parse fail 등)
-                    logger.info("[CALENDAR] Finnhub fallback returned no events; see [FINNHUB] logs above for reason")
+                    logger.info("[CALENDAR] FMP fallback returned no events; check [FMP] logs above")
                     return
                 upserted = 0
                 for it in items:
@@ -207,7 +205,7 @@ async def fetch_economic_calendar():
                             existing.previous_value = previous_value
                             existing.is_released = is_released
                             existing.importance = importance
-                            existing.source = "Finnhub"
+                            existing.source = "FMP"
                             existing.updated_at = datetime.now(timezone.utc)
                         else:
                             ko_name = None
@@ -227,22 +225,22 @@ async def fetch_economic_calendar():
                                 previous_value=previous_value,
                                 is_released=is_released,
                                 link=it.get("link"),
-                                source="Finnhub",
+                                source="FMP",
                             )
                             db.add(cal)
                         upserted += 1
                     except Exception as ex:
-                        logger.warning("[CALENDAR] Finnhub item upsert failed: %s", ex)
-                        print(f"[CALENDAR] Finnhub item upsert failed: {ex}")
+                        logger.warning("[CALENDAR] FMP item upsert failed: %s", ex)
+                        print(f"[CALENDAR] FMP item upsert failed: {ex}")
                         continue
                 db.commit()
-                logger.info("[CALENDAR] Finnhub upserted=%s", upserted)
-                print(f"[CALENDAR] Finnhub upserted={upserted}")
+                logger.info("[CALENDAR] FMP upserted=%s", upserted)
+                print(f"[CALENDAR] FMP upserted={upserted}")
                 total_in_db = db.query(EconomicCalendar).count()
                 print(f"[DEBUG-2] 현재 DB에 저장된 총 지표 개수: {total_in_db}")
             except Exception as e:
-                logger.exception("[CALENDAR] Finnhub fallback error: %s", e)
-                print(f"[CALENDAR] Finnhub fallback error: {e}")
+                logger.exception("[CALENDAR] FMP fallback error: %s", e)
+                print(f"[CALENDAR] FMP fallback error: {e}")
             return
 
         print(f"[CALENDAR] Scraping kr.investing.com/economic-calendar ({len(rows)} rows)")
