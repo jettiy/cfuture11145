@@ -1,0 +1,40 @@
+{
+  "name": "futures-terminal-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001 --turbo",
+    "dev:3002": "next dev -p 3002 --turbo",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview"
+  },
+  "dependencies": {
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "autoprefixer": "^10.4.16",
+    "axios": "^1.6.2",
+    "date-fns": "^2.30.0",
+    "lucide-react": "^0.563.0",
+    "next": "14.2.35",
+    "next-themes": "^0.4.6",
+    "postcss": "^8.4.32",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.1",
+    "react-query": "^3.39.3",
+    "socket.io-client": "^4.6.1",
+    "tailwindcss": "^3.3.6",
+    "typescript": "^5.3.3",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.17.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.2.35",
+    "wrangler": "^3.99.0"
+  }
+}

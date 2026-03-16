@@ -1,0 +1,15 @@
+# Cloudflare Cron Worker — 스케줄 트리거 단일 담당 (봉 완성 주기)
+# 배포: cd cloudflare-cron && npx wrangler deploy
+# 시크릿: npx wrangler secret put CRON_SECRET / npx wrangler secret put BACKEND_URL
+
+name = "c-futrues-cron"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# 매 1분마다 실행 → Worker 내부에서 시각 기준으로 봉 완성 주기 분기
+[triggers]
+crons = ["* * * * *"]
+
+# 환경 변수는 대시보드 또는 wrangler secret으로 설정 (BACKEND_URL, CRON_SECRET)
+# BACKEND_URL 예: https://api.yourdomain.com
+# CRON_SECRET: 백엔드 CRON_SECRET과 동일한 값
