@@ -1,7 +1,5 @@
 """
-차트 데이터 수집 서비스
-- 1차: Finnhub 정식 API (지원 심볼만)
-- 2차(fallback): yfinance (무료/비공식, rate limit 있음)
+차트 데이터 수집 서비스 — yfinance 단일 소스.
 캐시 및 rate limit 회피.
 """
 import yfinance as yf
@@ -101,7 +99,7 @@ async def fetch_chart_data(
     max_retries: int = 3,
 ) -> Optional[pd.DataFrame]:
     """
-    차트 데이터: Finnhub(정식 API) 우선, 미지원/실패 시 yfinance fallback. 캐시·재시도 적용.
+    차트 데이터: yfinance 사용. 캐시·재시도 적용.
     """
     cache_key = (symbol, timeframe, lookahead_n)
     now = time.time()
@@ -116,20 +114,7 @@ async def fetch_chart_data(
     period_days, max_results = get_period_for_timeframe(timeframe, lookahead_n)
     period_days_int = int(period_days.replace("d", ""))
 
-    # 1) Finnhub 정식 API 시도 (지원 심볼만)
-    try:
-        from app.services.finnhub_service import fetch_finnhub_candles
-        df = await fetch_finnhub_candles(symbol, timeframe, period_days_int)
-        if df is not None and not df.empty:
-            if len(df) > max_results:
-                df = df.head(max_results)
-            _CHART_CACHE[cache_key] = (time.time(), df)
-            print(f"[CHART_DATA] Finnhub {len(df)} points for {symbol} ({timeframe})")
-            return df
-    except Exception as e:
-        print(f"[CHART_DATA] Finnhub skip for {symbol}: {e}")
-
-    # 2) yfinance fallback (무료/비공식, rate limit 주의)
+    # yfinance (단일 소스)
     yahoo_symbol = get_yahoo_symbol(symbol)
     last_key = yahoo_symbol
     if last_key in _LAST_REQUEST_TIME:

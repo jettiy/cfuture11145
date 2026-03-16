@@ -43,10 +43,19 @@ const BOARD_HOURS_AHEAD = 168
 /** 우측 KST 시계에 맞춰 1분마다 API 재호출 */
 const BOARD_POLL_MS = 60_000
 
+const INDICATOR_ACTUAL_UPDATE_EVENT = 'indicator_actual_updated'
+
 export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
   const [mergedEvents, setMergedEvents] = useState<MergedEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null)
+  const [realtimeRefreshTrigger, setRealtimeRefreshTrigger] = useState(0)
+
+  useEffect(() => {
+    const handler = () => setRealtimeRefreshTrigger((t) => t + 1)
+    window.addEventListener(INDICATOR_ACTUAL_UPDATE_EVENT, handler)
+    return () => window.removeEventListener(INDICATOR_ACTUAL_UPDATE_EVENT, handler)
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -55,7 +64,6 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
         const res = await calendarAPI.getBoard(symbol || undefined, BOARD_HOURS_AHEAD, 'low')
         if (!alive) return
         const list = Array.isArray(res?.data) ? res.data : []
-        console.log('🔥백엔드 원본 데이터:', list)
         setMergedEvents(list.map(boardEventToMerged))
         setLastUpdatedAt(new Date().toISOString())
       } catch (e) {
@@ -74,7 +82,7 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
       alive = false
       clearInterval(interval)
     }
-  }, [symbol])
+  }, [symbol, realtimeRefreshTrigger])
 
   /** [디버깅] KST 필터 임시 해제 — 원인 파악 후 복원 */
   // const todayKST = getTodayKST()

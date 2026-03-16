@@ -11,6 +11,29 @@ router = APIRouter()
 _NEWS_LIST_CACHE: dict = {}
 _NEWS_CACHE_TTL_SEC = 20
 
+# 주요 금융 매체 우선 노출 순위 (낮을수록 먼저). 미등록 매체는 99.
+NEWS_SOURCE_PRIORITY = {
+    "Bloomberg": 0,
+    "CNBC": 1,
+    "Reuters": 2,
+    "Financial Times": 3,
+    "Wall Street Journal": 4,
+    "WSJ": 4,
+    "Yahoo Finance": 5,
+    "MarketWatch": 6,
+    "Barron's": 7,
+    "Investing.com": 8,
+    "Seeking Alpha": 9,
+    "FMP": 10,
+}
+
+def _news_sort_key(n):
+    src = (getattr(n, "source", None) or "").strip()
+    pri = NEWS_SOURCE_PRIORITY.get(src, 99)
+    created = getattr(n, "created_at", None) or getattr(n, "published_at", None)
+    ts = created.timestamp() if created else 0
+    return (pri, -ts)
+
 @router.get("/", response_model=List[NewsResponse])
 async def get_news(
     limit: int = 20,
@@ -22,9 +45,8 @@ async def get_news(
         cached_at, data = _NEWS_LIST_CACHE[cache_key]
         if now - cached_at < _NEWS_CACHE_TTL_SEC:
             return data
-    news_list = db.query(News).order_by(
-        News.created_at.desc()
-    ).limit(limit).all()
+    news_list = db.query(News).order_by(News.created_at.desc()).limit(limit * 2).all()
+    news_list = sorted(news_list, key=_news_sort_key)[:limit]
     result = [NewsResponse.model_validate(n) for n in news_list]
     _NEWS_LIST_CACHE[cache_key] = (now, result)
     return result

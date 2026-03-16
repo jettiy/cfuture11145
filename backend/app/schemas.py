@@ -223,6 +223,20 @@ class CalendarResponse(BaseModel):
     updated_at: Optional[datetime]
 
 
+class IndexDataResponse(BaseModel):
+    """주요 지수 스냅샷 (DB 전용 — FMP 직접 호출 없음)"""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    symbol: str
+    name: Optional[str] = None
+    price: Optional[float] = None
+    change: Optional[float] = None
+    changes_percentage: Optional[float] = None
+    previous_close: Optional[float] = None
+    updated_at: datetime
+    source: Optional[str] = None
+
+
 class MergedEventResponse(BaseModel):
     """지표/일정 통합 보드용 단일 이벤트 (economic + custom 통합 렌더링)"""
     id: str  # "economic-{id}" | "custom-{id}"

@@ -57,12 +57,12 @@ async def cron_fetch_calendar(_: None = Depends(verify_cron_secret)):
     return {"ok": True, "job": "calendar"}
 
 
-@router.post("/investing-earnings")
-async def cron_fetch_investing_earnings(_: None = Depends(verify_cron_secret)):
-    """인베스팅닷컴 오늘의 실적 (매일 08:00 KST 권장)."""
-    from app.services.investing_earnings_service import fetch_investing_earnings_today
-    await fetch_investing_earnings_today()
-    return {"ok": True, "job": "investing-earnings"}
+@router.post("/indexes")
+async def cron_fetch_indexes(_: None = Depends(verify_cron_secret)):
+    """주요 지수 수집 (FMP, 1분 주기 권장)."""
+    from app.services.fmp_service import fetch_fmp_indexes
+    await fetch_fmp_indexes()
+    return {"ok": True, "job": "indexes"}
 
 
 @router.post("/ai-chat")

@@ -164,7 +164,8 @@ async def fetch_economic_indicators():
                         country = "US"
                     elif "중국" in row_text or "china" in row_text or "pbc" in ev_text or "pbc" in row_text:
                         country = "CN"
-                if country not in ("US", "CN"):
+                # 경제 지표 정제: US만 수집 (FMP 유료 플랜 효율)
+                if country != "US":
                     continue
                 event_name = event_cell.get_text(strip=True)
                 actual = row.find('td', class_='act').get_text(strip=True) if row.find('td', class_='act') else ""
@@ -195,9 +196,14 @@ async def fetch_economic_indicators():
                     existing.is_released = is_released
                     existing.updated_at = datetime.utcnow()
                 else:
+                    ko_name = event_name
+                    try:
+                        ko_name = await translate_to_korean(event_name, "경제 지표") or event_name
+                    except Exception:
+                        pass
                     new_ind = EconomicIndicator(
                         name=event_name,
-                        ko_name=event_name,
+                        ko_name=ko_name,
                         country=country,
                         category="general",
                         value=actual_val,
@@ -249,18 +255,10 @@ def cleanup_old_earnings(db: Session):
     print(f"[EARNINGS] Cleaned up {deleted} old earnings records")
 
 async def fetch_earnings():
-    """기업 실적 데이터 수집 (오늘 날짜만 유지) - Finnhub 통합"""
+    """기업 실적 데이터 수집 (오늘 날짜만 유지) — FMP/정적 데이터."""
     db = SessionLocal()
     try:
-        # 오래된 데이터 정리
         cleanup_old_earnings(db)
-        
-        # Finnhub에서 실적 데이터 가져오기
-        from app.services.finnhub_service import fetch_finnhub_earnings
-        try:
-            await fetch_finnhub_earnings()
-        except Exception as e:
-            print(f"[EARNINGS] Finnhub error: {e}")
         # KST 기준 오늘 날짜
         from datetime import timezone, timedelta
         kst = timezone(timedelta(hours=9))

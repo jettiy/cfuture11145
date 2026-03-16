@@ -49,9 +49,11 @@ async def _llm_verbalize_evidence(
     symbol: str,
     timeframe: str,
     news_headlines: Optional[List[str]] = None,
+    fmp_technical_facts: Optional[str] = None,
 ) -> tuple[str, float]:
     """
-    근거 리스트 + 실시간 뉴스를 LLM에 넘겨 문장화. 시그널 결정은 하지 않음.
+    근거 리스트 + FMP 실시간 기술지표 Fact + 뉴스를 LLM에 넘겨 문장화.
+    LLM은 반드시 FMP에서 가져온 실시간 수치를 직접 인용해서 설명해야 함.
     Returns: (rationale_text, llm_cost).
     """
     api_key, api_url, model = _load_api_config()
@@ -59,7 +61,8 @@ async def _llm_verbalize_evidence(
         return "\n".join(evidence_list), 0.0
 
     bullet = "\n".join(f"- {e}" for e in evidence_list)
-    system = """주어진 실시간 뉴스와 기술 지표 근거를 참고하여, 3~5문장의 간결한 한국어 설명을 작성하세요.
+    system = """주어진 [FMP 실시간 기술지표 Fact]와 실시간 뉴스·기술 근거를 참고하여, 3~5문장의 간결한 한국어 설명을 작성하세요.
+**필수**: FMP에서 가져온 실시간 수치(RSI, MACD, EMA 등)를 반드시 직접 인용하여, 그 수치를 근거로 판단한 이유를 설명하세요.
 뉴스와 기술적 근거를 바탕으로 판단한 이유만 정리해 문장화하세요. 방향(롱/숏)이나 확률을 새로 추론·결정하지 마세요.
 다른 텍스트나 제목 없이 설명 문단만 반환하세요."""
 
@@ -67,9 +70,12 @@ async def _llm_verbalize_evidence(
     if news_headlines:
         news_block = "\n[실시간 시장 뉴스]\n" + "\n".join(f"- {h}" for h in news_headlines) + "\n\n"
 
-    user = f"""다음은 {symbol} {timeframe} 차트 분석을 위한 정보입니다. 실시간 뉴스와 기술 지표 근거를 참고해 위 지시에 따라 설명만 작성하세요.
+    fmp_block = ""
+    if fmp_technical_facts and fmp_technical_facts.strip():
+        fmp_block = "\n" + fmp_technical_facts.strip() + "\n\n"
 
-{news_block}[기술 지표 근거]
+    user = f"""다음은 {symbol} {timeframe} 차트 분석을 위한 정보입니다. FMP 실시간 기술지표 Fact와 뉴스·근거를 참고해, **위 Fact 수치를 반드시 인용**하여 설명만 작성하세요.
+{fmp_block}{news_block}[기술 지표 근거]
 {bullet}"""
 
     try:
@@ -123,7 +129,17 @@ async def analyze_signal_with_llm(
     if chart_data is None or chart_data.empty:
         raise ValueError(f"차트 데이터를 가져올 수 없습니다: {symbol} ({timeframe}). 잠시 후 다시 시도해 주세요.")
 
-    current_price = float(chart_data.iloc[0]["Close"])
+    # 선물 실시간가: FMP Commodities API(NQUSD, GCUSD, CLUSD) 우선 사용, 없으면 차트 Close
+    current_price = None
+    try:
+        from app.services.fmp_service import get_fmp_commodity_price
+        current_price = await get_fmp_commodity_price(symbol)
+    except Exception as e:
+        print(f"[SIGNAL_ANALYSIS] FMP commodity price skip: {e}")
+    if current_price is None:
+        current_price = float(chart_data.iloc[0]["Close"])
+    else:
+        print(f"[SIGNAL_ANALYSIS] Using FMP commodity price for {symbol}: {current_price}")
     # 규칙 엔진으로 방향/확률/진입·손절·목표 결정
     raw = compute_signal_from_rules(chart_data, current_price)
     evidence_list = raw["evidence_list"]
@@ -152,9 +168,17 @@ async def analyze_signal_with_llm(
         if close_db:
             db.close()
 
-    # LLM: 실시간 뉴스 + 근거를 바탕으로 문장화
+    # FMP 에이전트: 해당 타임프레임 실시간 RSI/MACD/EMA 조회 후 프롬프트에 Fact로 주입
+    fmp_facts = ""
+    try:
+        from app.services.fmp_service import get_fmp_technical_facts
+        fmp_facts = await get_fmp_technical_facts(symbol, timeframe)
+    except Exception as e:
+        print(f"[SIGNAL_ANALYSIS] FMP technical facts skip: {e}")
+
+    # LLM: FMP Fact + 실시간 뉴스 + 근거를 바탕으로 문장화 (FMP 수치 직접 인용 지시)
     rationale, llm_cost = await _llm_verbalize_evidence(
-        evidence_list, symbol, timeframe, news_headlines=news_headlines
+        evidence_list, symbol, timeframe, news_headlines=news_headlines, fmp_technical_facts=fmp_facts or None
     )
     if not rationale.strip():
         rationale = "\n".join(evidence_list)

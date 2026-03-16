@@ -17,7 +17,7 @@ router = APIRouter()
 
 @router.get("/news-summary", response_model=List[CalendarResponse])
 async def get_news_summary(db: Session = Depends(get_db)):
-    """뉴스정리 전용: Al Jazeera 헤드라인 5개만 (https://www.aljazeera.com/news/). 경제 일정 미포함."""
+    """뉴스정리 전용: DB에 저장된 뉴스만 조회 (저수지 패턴 — 외부 API 직접 호출 없음)."""
     from app.models import News
     import re as re_mod
 
@@ -28,34 +28,12 @@ async def get_news_summary(db: Session = Depends(get_db)):
         News.created_at >= start_date,
         News.created_at <= end_date
     ).order_by(News.created_at.desc()).limit(10).all()
-
+    # DB에 없으면 빈 목록 반환 (FMP 수집은 스케줄러/startup에서만 수행)
     if not aljazeera_news:
-        from app.services.news_service import fetch_aljazeera_news
-        try:
-            items = await fetch_aljazeera_news()
-            for item in items[:5]:
-                existing = db.query(News).filter(News.original_link == item["link"]).first()
-                if not existing:
-                    news = News(
-                        original_title=item["title"],
-                        original_summary=item.get("summary", "")[:500],
-                        original_link=item["link"],
-                        source=item.get("source", "Al Jazeera"),
-                        importance="high",
-                        is_breaking=False,
-                        created_at=item.get("published_at") or datetime.utcnow(),
-                    )
-                    db.add(news)
-            db.commit()
-            aljazeera_news = db.query(News).filter(
-                News.source == "Al Jazeera",
-                News.created_at >= start_date,
-                News.created_at <= end_date
-            ).order_by(News.created_at.desc()).limit(10).all()
-        except Exception as e:
-            db.rollback()
-            import logging
-            logging.getLogger(__name__).warning("Al Jazeera fetch on demand failed: %s", e)
+        aljazeera_news = db.query(News).filter(
+            News.created_at >= start_date,
+            News.created_at <= end_date
+        ).order_by(News.created_at.desc()).limit(5).all()
 
     result = []
     for news in aljazeera_news[:5]:
@@ -116,34 +94,11 @@ async def get_calendar(
             News.created_at >= start_date,
             News.created_at <= end_date
         ).order_by(News.created_at.desc()).limit(5).all()
-        # DB에 없으면 요청 시 한 번 수집
         if not aljazeera_news:
-            from app.services.news_service import fetch_aljazeera_news
-            try:
-                items = await fetch_aljazeera_news()
-                for item in items[:5]:
-                    existing = db.query(News).filter(News.original_link == item["link"]).first()
-                    if not existing:
-                        news = News(
-                            original_title=item["title"],
-                            original_summary=item.get("summary", "")[:500],
-                            original_link=item["link"],
-                            source=item.get("source", "Al Jazeera"),
-                            importance="high",
-                            is_breaking=False,
-                            created_at=item.get("published_at") or datetime.utcnow(),
-                        )
-                        db.add(news)
-                db.commit()
-                aljazeera_news = db.query(News).filter(
-                    News.source == "Al Jazeera",
-                    News.created_at >= start_date,
-                    News.created_at <= end_date
-                ).order_by(News.created_at.desc()).limit(5).all()
-            except Exception as e:
-                db.rollback()
-                import logging
-                logging.getLogger(__name__).warning("Al Jazeera fetch on demand failed: %s", e)
+            aljazeera_news = db.query(News).filter(
+                News.created_at >= start_date,
+                News.created_at <= end_date
+            ).order_by(News.created_at.desc()).limit(5).all()
         result = []
         for news in aljazeera_news:
             result.append(CalendarResponse(

@@ -197,6 +197,22 @@ class EconomicCalendar(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class IndexData(Base):
+    """주요 지수 스냅샷 (FMP quote 수집 — 저수지 패턴)"""
+    __tablename__ = "index_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String(30), nullable=False, index=True, unique=True)  # ^GSPC, ^IXIC, ^DJI 등
+    name = Column(String(100), nullable=True)
+    price = Column(Float, nullable=True)
+    change = Column(Float, nullable=True)
+    changes_percentage = Column(Float, nullable=True)
+    previous_close = Column(Float, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    source = Column(String(50), default="FMP", nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class CustomEvent(Base):
     """관리자 등록 특별 이벤트 (예: 엔비디아 GTC, 애플 WWDC 등)"""
     __tablename__ = "custom_events"

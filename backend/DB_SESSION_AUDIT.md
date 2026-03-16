@@ -15,10 +15,8 @@
 | `main.py` | ADMIN_BOOTSTRAP | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `database.py` | `get_db` (Depends) | `db = SessionLocal()` | ✅ `yield` 후 `finally: db.close()` |
 | `news_service.py` | `translate_news_in_background` | `db = SessionLocal()` | ✅ `finally: db.close()` |
-| `news_service.py` | `fetch_and_process_news` | `db = SessionLocal()` | ✅ `finally: db.close()` |
-| `finnhub_service.py` | `fetch_finnhub_news` | `db = SessionLocal()` | ✅ `finally: db.close()` |
-| `finnhub_service.py` | `fetch_finnhub_economic_data` | `db = SessionLocal()` | ✅ `finally: db.close()` |
-| `finnhub_service.py` | `fetch_finnhub_earnings` | `db = SessionLocal()` | ✅ `finally: db.close()` |
+| `news_service.py` | `fetch_and_process_news` | (FMP 호출만) | — |
+| `fmp_service.py` | `fetch_fmp_news` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `gdelt_service.py` | `fetch_gdelt_news` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `indicators_service.py` | `fetch_economic_indicators` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `indicators_service.py` | `fetch_earnings` | `db = SessionLocal()` | ✅ `finally: db.close()` |
@@ -27,7 +25,6 @@
 | `ai_chat_service.py` | `trigger_random_ai_chat` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `ai_chat_service.py` | `handle_ai_response` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `signal_analysis_service.py` | `analyze_signal_with_llm` | `db = SessionLocal()` (db=None일 때) | ✅ `finally: if close_db: db.close()` |
-| `investing_earnings_service.py` | `fetch_investing_earnings_today` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `websocket.py` | `websocket_endpoint` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `init_db.py` | `init_db` | `db = SessionLocal()` | ✅ `finally: db.close()` |
 | `create_admin.py` | `ensure_admin` | `db = SessionLocal()` | ✅ `finally: db.close()` |

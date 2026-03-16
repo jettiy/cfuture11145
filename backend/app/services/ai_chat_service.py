@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Message, User, Channel, UserRole, News, EconomicCalendar, EconomicIndicator
 from app.websocket import manager
-from app.services.llm_provider import briefing_analyst_reply
+from app.services.llm_provider import briefing_analyst_reply, stock_command_reply
 from typing import List, Optional
 
 # 실시간 브리핑 애널리스트 전용 유저 (채팅에서 @브리핑 호출 시 이 계정으로 답변)
@@ -215,13 +215,28 @@ def get_briefing_context(db: Session, symbol: str) -> dict:
 
 
 async def handle_briefing_analyst(channel_id: int, symbol: str, user_message: str):
-    """@브리핑 호출 시: 컨텍스트 수집 -> LLM 브리핑 생성 -> 봇 메시지 저장 및 브로드캐스트"""
+    """@브리핑 호출 시: DB 컨텍스트 + FMP 에이전트(Quote/뉴스/Key Metrics) 수집 -> LLM 데이터 기반 브리핑 생성."""
     db = SessionLocal()
     try:
         analyst = _ensure_briefing_analyst_user(db)
         if not analyst:
             return
         context = get_briefing_context(db, symbol)
+        # FMP 에이전트: 해당 종목 Quote, 최신 뉴스, Key Metrics 주입
+        try:
+            from app.services.fmp_service import (
+                get_fmp_quote_for_briefing,
+                get_fmp_stock_news_for_briefing,
+                get_fmp_key_metrics_for_briefing,
+            )
+            context["fmp_quote_text"] = await get_fmp_quote_for_briefing(symbol)
+            context["fmp_news_text"] = await get_fmp_stock_news_for_briefing(symbol, limit=10)
+            context["fmp_key_metrics_text"] = await get_fmp_key_metrics_for_briefing(symbol)
+        except Exception as e:
+            context.setdefault("fmp_quote_text", "")
+            context.setdefault("fmp_news_text", "")
+            context.setdefault("fmp_key_metrics_text", "")
+            print(f"[BRIEFING] FMP agent fetch skip: {e}")
         reply = await briefing_analyst_reply(symbol=symbol, user_message=user_message, context=context)
         msg = Message(
             channel_id=channel_id,
@@ -247,6 +262,84 @@ async def handle_briefing_analyst(channel_id: int, symbol: str, user_message: st
         print(f"[BRIEFING_ANALYST] {analyst.nickname} replied in channel {channel_id}")
     except Exception as e:
         print(f"[BRIEFING_ANALYST] Error: {e}")
+    finally:
+        db.close()
+
+
+async def handle_stock_command_analyst(channel_id: int, content: str):
+    """
+    채팅에서 @종목명 키워드(주가/실적/뉴스) 감지 시: 종목명→티커 해석 후 FMP 데이터 조회해 LLM에 주입해 답변.
+    - 주가/가격/얼마 -> FMP Quote
+    - 실적/어닝/매출 -> FMP Earnings(Income Statement + Earnings Surprises)
+    - 뉴스/소식 -> FMP Stock News
+    """
+    from app.services.chat_command_parser import parse_stock_command, resolve_ticker_from_map
+    from app.services.fmp_service import (
+        get_fmp_quote_for_briefing,
+        get_fmp_stock_news_for_briefing,
+        get_fmp_earnings_for_briefing,
+        get_fmp_ticker_by_name,
+    )
+
+    parsed = parse_stock_command(content)
+    if not parsed:
+        return
+    name_norm = parsed.get("name_normalized") or parsed.get("name") or ""
+    ticker = resolve_ticker_from_map(name_norm)
+    if not ticker:
+        ticker = await get_fmp_ticker_by_name(parsed.get("name") or name_norm)
+    if not ticker:
+        return  # 티커를 찾지 못하면 무시 (또는 "종목을 찾지 못했어요" 메시지 가능)
+
+    cmd = parsed.get("command_type") or "quote"
+    if cmd == "quote":
+        fmp_text = await get_fmp_quote_for_briefing(ticker)
+    elif cmd == "earnings":
+        fmp_text = await get_fmp_earnings_for_briefing(ticker)
+    elif cmd == "news":
+        fmp_text = await get_fmp_stock_news_for_briefing(ticker, limit=8)
+    else:
+        fmp_text = await get_fmp_quote_for_briefing(ticker)
+
+    if not (fmp_text or "").strip():
+        fmp_text = "[FMP 데이터 없음] 해당 종목/기간 데이터를 불러오지 못했습니다."
+
+    reply = await stock_command_reply(
+        symbol=ticker,
+        command_type=cmd,
+        fmp_data_text=fmp_text,
+        user_question=parsed.get("user_question") or "",
+    )
+
+    db = SessionLocal()
+    try:
+        analyst = _ensure_briefing_analyst_user(db)
+        if not analyst:
+            return
+        msg = Message(
+            channel_id=channel_id,
+            user_id=analyst.id,
+            content=reply,
+            is_bot=True,
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        payload = {
+            "id": msg.id,
+            "channel_id": msg.channel_id,
+            "user_id": analyst.id,
+            "username": analyst.username,
+            "nickname": analyst.nickname,
+            "content": msg.content,
+            "is_bot": True,
+            "user_role": analyst.role.value,
+            "created_at": msg.created_at.isoformat(),
+        }
+        await manager.broadcast_to_channel(channel_id, payload)
+        print(f"[STOCK_COMMAND] {analyst.nickname} replied in channel {channel_id} (ticker={ticker}, type={cmd})")
+    except Exception as e:
+        print(f"[STOCK_COMMAND] Error: {e}")
     finally:
         db.close()
 

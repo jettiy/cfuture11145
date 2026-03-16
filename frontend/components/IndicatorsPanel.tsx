@@ -43,6 +43,13 @@ export default function IndicatorsPanel({ symbol }: IndicatorsPanelProps) {
   const [indicators, setIndicators] = useState<Indicator[]>([])
   const [calendar, setCalendar] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [realtimeRefreshTrigger, setRealtimeRefreshTrigger] = useState(0)
+
+  useEffect(() => {
+    const handler = () => setRealtimeRefreshTrigger((t) => t + 1)
+    window.addEventListener('indicator_actual_updated', handler)
+    return () => window.removeEventListener('indicator_actual_updated', handler)
+  }, [])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,7 +71,7 @@ export default function IndicatorsPanel({ symbol }: IndicatorsPanelProps) {
     fetchData()
     const interval = setInterval(fetchData, 20 * 1000) // 20초마다 갱신 (뉴스정리 반영)
     return () => clearInterval(interval)
-  }, [])
+  }, [realtimeRefreshTrigger])
 
   const formatDateTime = (dateStr: string | null) => formatKSTDateTime(dateStr)
 

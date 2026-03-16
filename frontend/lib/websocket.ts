@@ -41,6 +41,8 @@ export class ChatWebSocket {
         const data = JSON.parse(event.data)
         if (data.type === 'news') {
           window.dispatchEvent(new CustomEvent('news_update', { detail: data }))
+        } else if (data.type === 'indicator_actual_updated') {
+          window.dispatchEvent(new CustomEvent('indicator_actual_updated', { detail: data }))
         } else {
           this.onMessage(data)
         }

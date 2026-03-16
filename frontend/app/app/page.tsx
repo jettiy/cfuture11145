@@ -1,22 +1,36 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuthStore } from '@/lib/store'
 import ChatPanel from '@/components/ChatPanel'
 import NewsPanel from '@/components/NewsPanel'
 import SignalPanel from '@/components/SignalPanel'
 import RecentSignalsList from '@/components/RecentSignalsList'
 import SymbolDecisionBoard from '@/components/SymbolDecisionBoard'
+import { ChatWebSocket } from '@/lib/websocket'
 
 export default function TerminalPage() {
   const { user } = useAuthStore()
   const [selectedSymbol, setSelectedSymbol] = useState('NQ1!')
   const [mounted, setMounted] = useState(false)
   const [signalsRefreshKey, setSignalsRefreshKey] = useState(0)
+  const indicatorWsRef = useRef<ChatWebSocket | null>(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // 지표 actual 실시간 알림 수신용 WebSocket (채널 1에 연결해 indicator_actual_updated 브로드캐스트만 수신)
+  useEffect(() => {
+    if (!user) return
+    const ws = new ChatWebSocket(1, () => {})
+    ws.connect()
+    indicatorWsRef.current = ws
+    return () => {
+      ws.disconnect()
+      indicatorWsRef.current = null
+    }
+  }, [user])
 
   const symbols = [
     { id: 'NQ1!', name: '나스닥선물' },

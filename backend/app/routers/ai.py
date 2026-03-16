@@ -40,8 +40,21 @@ async def ask_ai(
 
     symbol = (body.symbol or "").strip() or "NQ1!"
 
-    # 컨텍스트는 기존 브리핑 컨텍스트 수집 로직을 재사용
     context = get_briefing_context(db, symbol)
+    # FMP 에이전트: Quote, 해당 종목 뉴스, Key Metrics 주입 (데이터 기반 브리핑)
+    try:
+        from app.services.fmp_service import (
+            get_fmp_quote_for_briefing,
+            get_fmp_stock_news_for_briefing,
+            get_fmp_key_metrics_for_briefing,
+        )
+        context["fmp_quote_text"] = await get_fmp_quote_for_briefing(symbol)
+        context["fmp_news_text"] = await get_fmp_stock_news_for_briefing(symbol, limit=10)
+        context["fmp_key_metrics_text"] = await get_fmp_key_metrics_for_briefing(symbol)
+    except Exception:
+        context.setdefault("fmp_quote_text", "")
+        context.setdefault("fmp_news_text", "")
+        context.setdefault("fmp_key_metrics_text", "")
 
     # 커맨드별로 LLM에 주는 user_message를 살짝 조정
     if body.command == "briefing":

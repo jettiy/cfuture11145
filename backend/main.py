@@ -13,7 +13,7 @@ if os.path.isfile(_env_path):
 
 from app.database import engine, Base
 from app.migrations import run_sqlite_migrations, run_postgres_rls
-from app.routers import auth, users, chat, news, signals, admin, pro, support, indicators, calendar, cron, custom_events, ai
+from app.routers import auth, users, chat, news, signals, admin, pro, support, indicators, calendar, cron, custom_events, ai, indexes
 from app.websocket import router as websocket_router
 from app.scheduler import start_scheduler, shutdown_scheduler
 import asyncio
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
     else:
         start_scheduler()
 
-    # 새 DB 연결 직후 스케줄러(15분) 전에 빈 DB 문제 방지: 시작 시 핀허브 캘린더/뉴스 1회 비동기 수집
+    # 새 DB 연결 직후 스케줄러(15분) 전에 빈 DB 문제 방지: 시작 시 FMP 캘린더/뉴스 1회 비동기 수집
     print("[SYSTEM] Startup: Initial data fetch triggered")
     asyncio.create_task(startup_initial_data_fetch())
 
@@ -91,14 +91,16 @@ async def lifespan(app: FastAPI):
 
 
 async def startup_initial_data_fetch():
-    """서버 기동 직후 백그라운드에서 캘린더·뉴스 1회 수집 (블로킹 없음)"""
+    """서버 기동 직후 FMP 3종(캘린더·뉴스·지수) 1회 비동기 수집 — 스케줄러 대기 없이 빈 DB 채움."""
     try:
         await asyncio.sleep(1)  # DB/엔진 준비 대기
         from app.services.calendar_service import fetch_economic_calendar
         from app.services.news_service import fetch_and_process_news
+        from app.services.fmp_service import fetch_fmp_indexes
         await fetch_economic_calendar()
         await fetch_and_process_news()
-        print("[SYSTEM] Startup: Initial data fetch completed")
+        await fetch_fmp_indexes()
+        print("[SYSTEM] Startup: Initial data fetch completed (calendar, news, indexes)")
     except Exception as e:
         print(f"[SYSTEM] Startup: Initial data fetch error: {e}")
         import traceback
@@ -174,6 +176,7 @@ app.include_router(pro.router, prefix="/api/pro", tags=["pro"])
 app.include_router(support.router, prefix="/api/support", tags=["support"])
 app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(calendar.router, prefix="/api/calendar", tags=["calendar"])
+app.include_router(indexes.router, prefix="/api/indexes", tags=["indexes"])
 app.include_router(custom_events.router, prefix="/api", tags=["custom-events"])
 app.include_router(ai.router, prefix="/api", tags=["ai"])
 app.include_router(cron.router, prefix="/api")

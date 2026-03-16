@@ -310,16 +310,21 @@ async def briefing_analyst_reply(
     news_list = context.get("news") or []
     events_list = context.get("upcoming_events") or []
     releases_list = context.get("recent_releases") or []
+    fmp_quote = (context.get("fmp_quote_text") or "").strip()
+    fmp_news = (context.get("fmp_news_text") or "").strip()
+    fmp_metrics = (context.get("fmp_key_metrics_text") or "").strip()
 
-    has_any_data = bool(news_list or events_list or releases_list)
+    has_any_data = bool(news_list or events_list or releases_list or fmp_quote or fmp_news or fmp_metrics)
 
-    # 컨텍스트를 '리포트 템플릿'처럼 보이지 않게, 짧은 구조화 데이터로 전달
     payload = {
         "symbol": symbol,
         "user_message": user_message,
         "news": news_list[:6],
         "upcoming_events": events_list[:5],
         "recent_releases": releases_list[:5],
+        "fmp_quote": fmp_quote,
+        "fmp_news": fmp_news,
+        "fmp_key_metrics": fmp_metrics,
     }
 
     def _no_data_marker() -> str:
@@ -391,3 +396,49 @@ async def briefing_analyst_reply(
     except Exception as e:
         print(f"[BRIEFING_ANALYST] LLM error: {e}")
         return "브리핑 생성 중 일시 오류가 났습니다. 잠시 후 다시 요청해 주세요."
+
+
+async def stock_command_reply(symbol: str, command_type: str, fmp_data_text: str, user_question: str) -> str:
+    """
+    @종목명 키워드 요청 시: FMP로 가져온 데이터만 주입해 2~4문장 답변 생성.
+    command_type: quote | earnings | news
+    """
+    from app.prompts.briefing_analyst import STOCK_COMMAND_SYSTEM
+
+    current_api_key, current_api_url, current_model = _load_api_config()
+    if not current_api_key:
+        return "현재 AI 서비스를 사용할 수 없습니다. (API 설정 확인 필요)"
+
+    user_content = f"[종목 티커: {symbol}]\n[요청 유형: {command_type}]\n\n[FMP 데이터]\n{fmp_data_text}\n\n사용자 질문: {user_question or '(위 데이터 요약해줘)'}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                current_api_url,
+                headers={
+                    "Authorization": f"Bearer {current_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": current_model,
+                    "messages": [
+                        {"role": "system", "content": STOCK_COMMAND_SYSTEM},
+                        {"role": "user", "content": user_content},
+                    ],
+                    "temperature": 0.5,
+                    "max_tokens": 280,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if "choices" not in data or not data["choices"]:
+                return "데이터는 가져왔는데 답변 생성에 실패했어요. 잠시 후 다시 시도해 주세요."
+            raw = (data["choices"][0]["message"]["content"] or "").strip()
+            # 과한 마크다운 정리
+            for c in ("##", "#", "**", "`"):
+                raw = raw.replace(c, "")
+            return raw[:500] if len(raw) > 500 else raw
+    except Exception as e:
+        print(f"[STOCK_COMMAND] LLM error: {e}")
+        return "답변 생성 중 일시 오류가 났어요. 잠시 후 다시 요청해 주세요."

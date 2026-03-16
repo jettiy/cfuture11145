@@ -40,6 +40,18 @@ class ConnectionManager:
             for conn in disconnected:
                 self.disconnect(conn, channel_id)
 
+    async def broadcast_to_all(self, message: dict):
+        """모든 채널의 모든 연결에 메시지 전송 (예: 지표 actual 실시간 알림)."""
+        disconnected = []
+        for channel_id, connections in list(self.active_connections.items()):
+            for conn in connections:
+                try:
+                    await conn.send_json(message)
+                except Exception:
+                    disconnected.append((channel_id, conn))
+        for cid, conn in disconnected:
+            self.disconnect(conn, cid)
+
 manager = ConnectionManager()
 
 async def get_current_user_ws(token: str, db: Session):
@@ -119,6 +131,12 @@ async def websocket_endpoint(websocket: WebSocket, channel_id: int, token: str =
                     user_question = "선택 종목 기준으로 지금 시장 요약과 체크포인트만 짧게 알려 줘."
                 from app.services.ai_chat_service import handle_briefing_analyst
                 asyncio.create_task(handle_briefing_analyst(channel_id, symbol, user_question))
+            else:
+                # @종목명 키워드(주가/실적/뉴스) 형식이면 FMP 데이터 가져와 LLM 답변
+                from app.services.chat_command_parser import parse_stock_command
+                from app.services.ai_chat_service import handle_stock_command_analyst
+                if content_stripped.startswith("@") and parse_stock_command(content_stripped):
+                    asyncio.create_task(handle_stock_command_analyst(channel_id, content_stripped))
             
     except WebSocketDisconnect:
         manager.disconnect(websocket, channel_id)
