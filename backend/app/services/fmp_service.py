@@ -32,6 +32,16 @@ FMP_COMMODITY_SYMBOL_MAP = {"NQ1!": "NQUSD", "GOLD": "GCUSD", "CL1!": "CLUSD"}
 # 타임프레임 → FMP interval (technical_indicator)
 FMP_INTERVAL_MAP = {"1": "1min", "5": "5min", "15": "15min", "30": "30min", "1H": "1hour", "1D": "daily", "1W": "daily", "1M": "daily"}
 
+# HTTP 기본 헤더 (403/차단 방지에 도움)
+_COMMON_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Encoding": "gzip, deflate",
+}
+
+# 해외선물 트레이더용: 거시/지수/ETF 중심 뉴스만
+FMP_FUTURES_NEWS_TICKERS = "SPY,QQQ,DIA,TLT,GLD,USO,UUP"
+
 
 def _parse_fmp_datetime(date_str: Optional[str], time_str: Optional[str]) -> Optional[datetime]:
     """FMP date/time을 UTC datetime으로 변환."""
@@ -135,10 +145,11 @@ async def get_economic_calendar(
         from_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
     if not to_date:
         to_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
-    params = {"from": from_date, "to": to_date, "apikey": api_key}
+    # country=US 쿼리 파라미터도 명시(운영에서 불필요 국가 유입 방지) + 로컬 필터 병행
+    params = {"from": from_date, "to": to_date, "country": "US", "apikey": api_key}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(FMP_ECONOMIC_CALENDAR_URL, params=params)
+            r = await client.get(FMP_ECONOMIC_CALENDAR_URL, params=params, headers=_COMMON_HEADERS)
         if r.status_code != 200:
             logger.error("[FMP] economic calendar HTTP status=%s body=%s", r.status_code, (r.text or "")[:300])
             print(f"[FMP] economic calendar HTTP error: status={r.status_code}")
@@ -168,8 +179,9 @@ async def get_economic_calendar(
 
 async def fetch_fmp_news() -> int:
     """
-    FMP Articles API로 시장 뉴스 수집. News 모델에 맞게 파싱 후 DB Upsert.
-    title→original_title, date→published_at, content/text/snippet→original_summary, link→original_link, site→source.
+    FMP Stock News API로 시장 뉴스 수집(ETF/거시 중심). News 모델에 맞게 파싱 후 DB Insert.
+    - tickers=SPY,QQQ,DIA,TLT,GLD,USO,UUP 로 선물 트레이딩에 불필요한 개별주 뉴스 최소화
+    - 403 등 에러 발생 시 서버가 죽지 않도록 안전하게 0 반환
     반환: 새로 저장한 뉴스 개수.
     """
     from app.database import SessionLocal
@@ -181,16 +193,23 @@ async def fetch_fmp_news() -> int:
         return 0
     db = SessionLocal()
     try:
-        params = {"page": 0, "limit": 30, "apikey": api_key}
+        params = {
+            "tickers": FMP_FUTURES_NEWS_TICKERS,
+            "limit": 50,
+            "apikey": api_key,
+        }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(FMP_ARTICLES_URL, params=params)
+            # /api/v3/fmp/articles 는 플랜/권한에 따라 403이 나올 수 있어 stock_news로 통일
+            r = await client.get(FMP_STOCK_NEWS_URL, params=params, headers=_COMMON_HEADERS)
         if r.status_code != 200:
-            print(f"[FMP] articles HTTP error: status={r.status_code}")
+            # 403 등은 운영에서 빈번할 수 있으므로 예외로 올리지 않고 로그만 남김
+            print(f"[FMP] stock_news HTTP error: status={r.status_code}")
+            logger.error("[FMP] stock_news HTTP status=%s body=%s", r.status_code, (r.text or "")[:300])
             return 0
         data = r.json()
-        raw_list = data if isinstance(data, list) else (data.get("content") or data.get("articles") or data.get("data") or [])
+        raw_list = data if isinstance(data, list) else (data.get("data") or data.get("content") or data.get("articles") or [])
         if not raw_list:
-            print("[FMP] articles empty")
+            print("[FMP] stock_news empty")
             return 0
         # 홍보/광고성 기사 제목 키워드 필터 (FMP 유료 플랜 효율)
         _AD_TITLE_KEYWORDS = [
@@ -214,12 +233,13 @@ async def fetch_fmp_news() -> int:
                 link = (item.get("link") or item.get("url") or item.get("publicationUrl") or "").strip()
                 if not link:
                     link = "#"
-                summary = (item.get("content") or item.get("text") or item.get("snippet") or item.get("summary") or "")[:500]
+                # stock_news는 "text" / "site" / "publishedDate" 등을 사용
+                summary = (item.get("text") or item.get("content") or item.get("snippet") or item.get("summary") or "")[:500]
                 source = (item.get("site") or item.get("source") or "FMP").strip()
                 pub_at = datetime.now(timezone.utc)
-                if item.get("date") or item.get("publishedAt") or item.get("published_at"):
+                if item.get("publishedDate") or item.get("date") or item.get("publishedAt") or item.get("published_at"):
                     try:
-                        dt_str = str(item.get("date") or item.get("publishedAt") or item.get("published_at")).strip()
+                        dt_str = str(item.get("publishedDate") or item.get("date") or item.get("publishedAt") or item.get("published_at")).strip()
                         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
                             try:
                                 pub_at = datetime.strptime(dt_str[:19] if len(dt_str) >= 19 else dt_str[:10], fmt)

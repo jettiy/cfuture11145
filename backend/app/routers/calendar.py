@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_KST = timezone(timedelta(hours=9))
+
+def _to_kst(dt: Optional[datetime]) -> Optional[datetime]:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_KST)
+
 
 @router.get("/news-summary", response_model=List[CalendarResponse])
 async def get_news_summary(db: Session = Depends(get_db)):
@@ -149,7 +158,11 @@ async def get_calendar(
     ).all()
     logger.info("[CALENDAR API get_calendar] country=%s days_ahead=%s cal_start=%s api_response_count=%s",
                 country, days_ahead, cal_start.isoformat(), len(existing_events))
-    return [CalendarResponse.model_validate(event) for event in existing_events]
+    # KST(UTC+9)로 변환해 반환 (프론트 날짜 꼬임 방지)
+    return [
+        CalendarResponse.model_validate(event).model_copy(update={"scheduled_time": _to_kst(event.scheduled_time)})
+        for event in existing_events
+    ]
 
 
 def _kst_today_utc_range():
@@ -196,7 +209,10 @@ async def get_today_events(
     events = query.order_by(EconomicCalendar.scheduled_time.asc()).all()
     logger.info("[CALENDAR API today-events] country=%s today_start_utc=%s api_count=%s",
                 country, today_start_utc.isoformat(), len(events))
-    return [CalendarResponse.model_validate(e) for e in events]
+    return [
+        CalendarResponse.model_validate(e).model_copy(update={"scheduled_time": _to_kst(e.scheduled_time)})
+        for e in events
+    ]
 
 
 @router.get("/upcoming", response_model=List[CalendarResponse])
@@ -239,7 +255,10 @@ async def get_upcoming_events(
             logger.info("[CALENDAR API upcoming] sample: id=%s scheduled_time=%s is_released=%s country=%s",
                         e.id, e.scheduled_time, e.is_released, e.country)
     
-    return [CalendarResponse.model_validate(event) for event in events]
+    return [
+        CalendarResponse.model_validate(event).model_copy(update={"scheduled_time": _to_kst(event.scheduled_time)})
+        for event in events
+    ]
 
 
 def _importance_set(min_level: str) -> List[str]:
@@ -266,7 +285,8 @@ async def get_calendar_board(
     today_start_utc, today_end_utc = _kst_today_utc_range()
     week_end_utc = _kst_week_end_utc()
 
-    if (range_filter or "").strip().lower() == "today":
+    rf = (range_filter or "").strip().lower()
+    if rf == "today":
         # 오늘 일정: KST 오늘 해당만
         economic_events = (
             db.query(EconomicCalendar)
@@ -287,7 +307,7 @@ async def get_calendar_board(
             .order_by(CustomEvent.event_date.asc())
             .all()
         )
-    elif (range_filter or "").strip().lower() == "week":
+    elif rf == "week":
         # 이번 주 일정: 오늘 ~ 이번 주 일요일 23:59
         economic_events = (
             db.query(EconomicCalendar)
@@ -309,23 +329,34 @@ async def get_calendar_board(
             .all()
         )
     else:
-        # 기본: 최근 50건 (기존 동작)
+        # 기본: 향후 hours_ahead 내 이벤트를 "시간순(오름차순)"으로
+        start_utc = datetime.now(timezone.utc)
+        end_utc = start_utc + timedelta(hours=hours_ahead)
         economic_events = (
             db.query(EconomicCalendar)
-            .order_by(EconomicCalendar.scheduled_time.desc())
-            .limit(50)
+            .filter(
+                EconomicCalendar.scheduled_time >= start_utc,
+                EconomicCalendar.scheduled_time <= end_utc,
+                EconomicCalendar.importance.in_(_importance_set(importance)),
+                EconomicCalendar.country == "US",
+            )
+            .order_by(EconomicCalendar.scheduled_time.asc())
             .all()
         )
         custom_events = (
             db.query(CustomEvent)
-            .order_by(CustomEvent.event_date.desc())
-            .limit(50)
+            .filter(
+                CustomEvent.is_active == True,
+                CustomEvent.event_date >= start_utc,
+                CustomEvent.event_date <= end_utc,
+            )
+            .order_by(CustomEvent.event_date.asc())
             .all()
         )
 
     merged: List[MergedEventResponse] = []
     for e in economic_events:
-        st = e.scheduled_time
+        st = _to_kst(e.scheduled_time)
         scheduled_at = st.isoformat() if st else ""
         title = (e.ko_event_name or e.event_name or "").strip()
         merged.append(MergedEventResponse(
@@ -343,7 +374,7 @@ async def get_calendar_board(
             target_symbol=None,
         ))
     for c in custom_events:
-        ed = c.event_date
+        ed = _to_kst(c.event_date)
         scheduled_at = ed.isoformat() if ed else ""
         merged.append(MergedEventResponse(
             id=f"custom-{c.id}",
@@ -360,6 +391,12 @@ async def get_calendar_board(
             target_symbol=c.target_symbol,
         ))
 
-    merged.sort(key=lambda x: x.scheduled_at)
+    # 문자열 정렬 대신 datetime 기준으로 정렬 (KST 기준 오름차순)
+    def _parse_iso(s: str) -> datetime:
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return datetime.min.replace(tzinfo=_KST)
+    merged.sort(key=lambda x: _parse_iso(x.scheduled_at))
     logger.info("[CALENDAR API board] symbol=%s range=%s merged_count=%s", symbol, range_filter, len(merged))
     return merged

@@ -258,4 +258,8 @@ async def translate_news_in_background(news_id: int):
 async def fetch_and_process_news():
     """뉴스 수집: FMP API 단일 소스 (응답 형식 /api/news 와 100% 동일 유지)."""
     from app.services.fmp_service import fetch_fmp_news
-    await fetch_fmp_news()
+    try:
+        await fetch_fmp_news()
+    except Exception as e:
+        # 뉴스 수집 실패가 서버/스케줄러 전체를 죽이지 않도록 보호
+        print(f"[NEWS] FMP fetch failed (server continues): {e}")
