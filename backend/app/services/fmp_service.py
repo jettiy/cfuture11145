@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 
 FMP_API_KEY = os.getenv("FMP_API_KEY", "")
 FMP_ECONOMIC_CALENDAR_URL = "https://financialmodelingprep.com/stable/economic-calendar"
+# NOTE: FMP v3 일부 뉴스 엔드포인트는 Legacy로 차단될 수 있어 stable 뉴스 API를 사용합니다.
 FMP_ARTICLES_URL = "https://financialmodelingprep.com/api/v3/fmp/articles"
 FMP_QUOTE_URL = "https://financialmodelingprep.com/api/v3/quote"
 FMP_TECHNICAL_INDICATOR_BASE = "https://financialmodelingprep.com/api/v3/technical_indicator"
-FMP_STOCK_NEWS_URL = "https://financialmodelingprep.com/api/v3/stock_news"
+# Stable Search Stock News API (권장): https://financialmodelingprep.com/stable/news/stock?symbols=AAPL&apikey=...
+FMP_STOCK_NEWS_URL = "https://financialmodelingprep.com/stable/news/stock"
 FMP_KEY_METRICS_URL = "https://financialmodelingprep.com/api/v3/key-metrics-ttm"
 FMP_INCOME_STATEMENT_URL = "https://financialmodelingprep.com/api/v3/income-statement"
 FMP_EARNINGS_URL = "https://financialmodelingprep.com/api/v3/earnings-surprises"
@@ -39,8 +41,8 @@ _COMMON_HEADERS = {
     "Accept-Encoding": "gzip, deflate",
 }
 
-# 해외선물 트레이더용: 거시/지수/ETF 중심 뉴스만
-FMP_FUTURES_NEWS_TICKERS = "SPY,QQQ,DIA,TLT,GLD,USO,UUP"
+# 해외선물 트레이더용: 거시/지수/ETF 중심 뉴스만 (FMP stable/news/stock uses symbols)
+FMP_FUTURES_NEWS_SYMBOLS = "SPY,QQQ,DIA,TLT,GLD,USO,UUP"
 
 
 def _parse_fmp_datetime(date_str: Optional[str], time_str: Optional[str]) -> Optional[datetime]:
@@ -194,12 +196,12 @@ async def fetch_fmp_news() -> int:
     db = SessionLocal()
     try:
         params = {
-            "tickers": FMP_FUTURES_NEWS_TICKERS,
+            "symbols": FMP_FUTURES_NEWS_SYMBOLS,
             "limit": 50,
             "apikey": api_key,
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # /api/v3/fmp/articles 는 플랜/권한에 따라 403이 나올 수 있어 stock_news로 통일
+            # Legacy 차단 회피: stable/news/stock 사용
             r = await client.get(FMP_STOCK_NEWS_URL, params=params, headers=_COMMON_HEADERS)
         if r.status_code != 200:
             # 403 등은 운영에서 빈번할 수 있으므로 예외로 올리지 않고 로그만 남김

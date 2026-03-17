@@ -27,6 +27,13 @@ async def _fetch_calendar_return_count():
     """15분 주기 job용: fetch_economic_calendar는 (count, updated_events) 반환."""
     await fetch_economic_calendar()
 
+async def _fetch_news_safe():
+    """5분 주기 job용: 뉴스 수집 실패가 스케줄러/서버를 중단시키지 않도록 보호."""
+    try:
+        await fetch_fmp_news()
+    except Exception as e:
+        print(f"[SCHEDULER] fetch_fmp_news error (will retry next interval): {e}")
+
 
 async def run_indicator_realtime_poll_loop():
     """
@@ -69,9 +76,9 @@ def start_scheduler():
         id="fetch_fmp_calendar",
         replace_existing=True,
     )
-    # 5분마다: 시장 뉴스 (FMP api/v3/fmp/articles → DB)
+    # 5분마다: 시장 뉴스 (FMP stable/news/stock → DB)
     scheduler.add_job(
-        fetch_fmp_news,
+        _fetch_news_safe,
         trigger=IntervalTrigger(minutes=5),
         id="fetch_fmp_news",
         replace_existing=True,

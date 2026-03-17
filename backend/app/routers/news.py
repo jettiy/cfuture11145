@@ -28,11 +28,10 @@ NEWS_SOURCE_PRIORITY = {
 }
 
 def _news_sort_key(n):
-    src = (getattr(n, "source", None) or "").strip()
-    pri = NEWS_SOURCE_PRIORITY.get(src, 99)
-    created = getattr(n, "created_at", None) or getattr(n, "published_at", None)
-    ts = created.timestamp() if created else 0
-    return (pri, -ts)
+    # 최신 시간순(내림차순) 강제: published_at 우선, 없으면 created_at 사용
+    dt = getattr(n, "published_at", None) or getattr(n, "created_at", None)
+    ts = dt.timestamp() if dt else 0
+    return (-ts,)
 
 @router.get("/", response_model=List[NewsResponse])
 async def get_news(
@@ -45,7 +44,8 @@ async def get_news(
         cached_at, data = _NEWS_LIST_CACHE[cache_key]
         if now - cached_at < _NEWS_CACHE_TTL_SEC:
             return data
-    news_list = db.query(News).order_by(News.created_at.desc()).limit(limit * 2).all()
+    # DB에서 넉넉히 가져온 뒤, 최신순 정렬을 파이썬 레벨에서 확정
+    news_list = db.query(News).order_by(News.created_at.desc()).limit(limit * 4).all()
     news_list = sorted(news_list, key=_news_sort_key)[:limit]
     result = [NewsResponse.model_validate(n) for n in news_list]
     _NEWS_LIST_CACHE[cache_key] = (now, result)
