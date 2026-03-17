@@ -17,6 +17,7 @@ from app.routers import auth, users, chat, news, signals, admin, pro, support, i
 from app.websocket import router as websocket_router
 from app.scheduler import start_scheduler, shutdown_scheduler
 import asyncio
+from sqlalchemy.exc import IntegrityError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -30,6 +31,31 @@ async def lifespan(app: FastAPI):
         run_postgres_rls(engine)
     except Exception as e:
         print(f"[ERROR] Database initialization error: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Render 운영 DB 등: channels 테이블에 기본 채널(id=1)이 없으면 생성 (FK 오류 방지)
+    try:
+        from app.database import SessionLocal
+        from app.models import Channel
+        db = SessionLocal()
+        try:
+            ch = db.query(Channel).filter(Channel.id == 1).first()
+            if not ch:
+                db.add(Channel(id=1, name="Global", symbol=None))
+                try:
+                    db.commit()
+                    print("[SEED] Created default channel id=1 (Global)")
+                except IntegrityError:
+                    # 동시 부팅/중복 실행 등으로 이미 생겼다면 무시
+                    db.rollback()
+                    print("[SEED] Default channel id=1 already exists (race)")
+            else:
+                print("[SEED] Default channel id=1 exists")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[SEED] Default channel seed error (server continues): {e}")
         import traceback
         traceback.print_exc()
 

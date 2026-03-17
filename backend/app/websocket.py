@@ -7,6 +7,9 @@ from typing import Dict, List, Optional
 import json
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -120,20 +123,28 @@ async def websocket_endpoint(websocket: WebSocket, channel_id: int, token: str =
                 content=content,
                 is_bot=False
             )
-            db.add(message)
-            db.commit()
-            db.refresh(message)
+            persisted = False
+            try:
+                db.add(message)
+                db.commit()
+                db.refresh(message)
+                persisted = True
+            except SQLAlchemyError as e:
+                # DB 저장 실패(예: FK/channel 없음)라도 WS 루프가 죽지 않게 보호
+                db.rollback()
+                logger.exception("[WS] DB write failed (will still broadcast/echo): %s", e)
             
             response = {
-                "id": message.id,
-                "channel_id": message.channel_id,
+                # 저장 실패 시에도 프론트 중복 방지/렌더링을 위해 임시 id 제공
+                "id": message.id if persisted else int(time.time() * 1000),
+                "channel_id": channel_id,
                 "user_id": user.id,
                 "username": user.username,
                 "nickname": user.nickname,
-                "content": message.content,
+                "content": content,
                 "is_bot": False,
                 "user_role": user.role.value,
-                "created_at": message.created_at.isoformat(),
+                "created_at": (message.created_at.isoformat() if persisted and message.created_at else datetime.now(timezone.utc).isoformat()),
                 "is_private": False,
             }
             content_stripped = content.strip()
