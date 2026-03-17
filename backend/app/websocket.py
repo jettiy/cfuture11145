@@ -3,9 +3,12 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Message, Channel, User
 from app.models import UserRole
-from typing import Dict, List
+from typing import Dict, List, Optional
 import json
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 이미지 메시지: content가 data:image 로 시작하면 이미지. Pro/Admin만 허용.
 def _is_image_content(content: str) -> bool:
@@ -27,28 +30,44 @@ class ConnectionManager:
     
     def disconnect(self, websocket: WebSocket, channel_id: int):
         if channel_id in self.active_connections:
-            self.active_connections[channel_id].remove(websocket)
+            try:
+                self.active_connections[channel_id].remove(websocket)
+            except ValueError:
+                pass
+    
+    async def send_to_websocket(self, websocket: WebSocket, message: dict) -> bool:
+        """단일 연결에만 전송. 실패 시 False, 한 연결 끊김으로 다른 유저에 영향 없음."""
+        try:
+            await websocket.send_json(message)
+            return True
+        except Exception as e:
+            logger.debug("[WS] send_to_websocket failed: %s", e)
+            return False
     
     async def broadcast_to_channel(self, channel_id: int, message: dict):
-        if channel_id in self.active_connections:
-            disconnected = []
-            for connection in self.active_connections[channel_id]:
-                try:
-                    await connection.send_json(message)
-                except:
-                    disconnected.append(connection)
-            for conn in disconnected:
-                self.disconnect(conn, channel_id)
+        """채널 내 모든 연결에 전송. 한 명 끊겨도 나머지에는 정상 전달되도록 예외 처리."""
+        if channel_id not in self.active_connections:
+            return
+        disconnected = []
+        for connection in list(self.active_connections[channel_id]):
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                logger.debug("[WS] broadcast_to_channel send failed: %s", e)
+                disconnected.append(connection)
+        for conn in disconnected:
+            self.disconnect(conn, channel_id)
 
     async def broadcast_to_all(self, message: dict):
         """모든 채널의 모든 연결에 메시지 전송 (예: 지표 actual 실시간 알림)."""
         disconnected = []
-        for channel_id, connections in list(self.active_connections.items()):
-            for conn in connections:
+        for cid, connections in list(self.active_connections.items()):
+            for conn in list(connections):
                 try:
                     await conn.send_json(message)
-                except Exception:
-                    disconnected.append((channel_id, conn))
+                except Exception as e:
+                    logger.debug("[WS] broadcast_to_all send failed: %s", e)
+                    disconnected.append((cid, conn))
         for cid, conn in disconnected:
             self.disconnect(conn, cid)
 
@@ -105,7 +124,6 @@ async def websocket_endpoint(websocket: WebSocket, channel_id: int, token: str =
             db.commit()
             db.refresh(message)
             
-            # 브로드캐스트
             response = {
                 "id": message.id,
                 "channel_id": message.channel_id,
@@ -115,28 +133,33 @@ async def websocket_endpoint(websocket: WebSocket, channel_id: int, token: str =
                 "content": message.content,
                 "is_bot": False,
                 "user_role": user.role.value,
-                "created_at": message.created_at.isoformat()
+                "created_at": message.created_at.isoformat(),
+                "is_private": False,
             }
-            await manager.broadcast_to_channel(channel_id, response)
-
-            # @브리핑 호출 시 실시간 브리핑 애널리스트가 답변
             content_stripped = content.strip()
-            if content_stripped.startswith("@브리핑") or content_stripped.startswith("브리핑 "):
-                symbol = message_data.get("symbol")
-                if not symbol:
-                    ch = db.query(Channel).filter(Channel.id == channel_id).first()
-                    symbol = (ch.symbol if ch else None) or "NQ1!"
-                user_question = content_stripped.replace("@브리핑", "").replace("브리핑", "").strip()
-                if not user_question:
-                    user_question = "선택 종목 기준으로 지금 시장 요약과 체크포인트만 짧게 알려 줘."
-                from app.services.ai_chat_service import handle_briefing_analyst
-                asyncio.create_task(handle_briefing_analyst(channel_id, symbol, user_question))
+            is_ai_call = content_stripped.startswith("@")
+            
+            if is_ai_call:
+                # AI 호출: broadcast 하지 않고, 해당 유저에게만 Echo. AI 답변도 해당 websocket으로만 전송.
+                await manager.send_to_websocket(websocket, response)
+                if content_stripped.startswith("@브리핑") or content_stripped.startswith("브리핑 "):
+                    symbol = message_data.get("symbol")
+                    if not symbol:
+                        ch = db.query(Channel).filter(Channel.id == channel_id).first()
+                        symbol = (ch.symbol if ch else None) or "NQ1!"
+                    user_question = content_stripped.replace("@브리핑", "").replace("브리핑", "").strip()
+                    if not user_question:
+                        user_question = "선택 종목 기준으로 지금 시장 요약과 체크포인트만 짧게 알려 줘."
+                    from app.services.ai_chat_service import handle_briefing_analyst
+                    asyncio.create_task(handle_briefing_analyst(channel_id, symbol, user_question, reply_websocket=websocket))
+                else:
+                    from app.services.chat_command_parser import parse_stock_command
+                    from app.services.ai_chat_service import handle_stock_command_analyst
+                    if parse_stock_command(content_stripped):
+                        asyncio.create_task(handle_stock_command_analyst(channel_id, content_stripped, reply_websocket=websocket))
             else:
-                # @종목명 키워드(주가/실적/뉴스) 형식이면 FMP 데이터 가져와 LLM 답변
-                from app.services.chat_command_parser import parse_stock_command
-                from app.services.ai_chat_service import handle_stock_command_analyst
-                if content_stripped.startswith("@") and parse_stock_command(content_stripped):
-                    asyncio.create_task(handle_stock_command_analyst(channel_id, content_stripped))
+                # 일반 채팅: 전체 브로드캐스트
+                await manager.broadcast_to_channel(channel_id, response)
             
     except WebSocketDisconnect:
         manager.disconnect(websocket, channel_id)

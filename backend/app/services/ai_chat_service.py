@@ -6,7 +6,7 @@ from app.database import SessionLocal
 from app.models import Message, User, Channel, UserRole, News, EconomicCalendar, EconomicIndicator
 from app.websocket import manager
 from app.services.llm_provider import briefing_analyst_reply, stock_command_reply
-from typing import List, Optional
+from typing import List, Optional, Any
 
 # 실시간 브리핑 애널리스트 전용 유저 (채팅에서 @브리핑 호출 시 이 계정으로 답변)
 BRIEFING_ANALYST_USERNAME = "briefing_analyst"
@@ -214,8 +214,11 @@ def get_briefing_context(db: Session, symbol: str) -> dict:
     }
 
 
-async def handle_briefing_analyst(channel_id: int, symbol: str, user_message: str):
-    """@브리핑 호출 시: DB 컨텍스트 + FMP 에이전트(Quote/뉴스/Key Metrics) 수집 -> LLM 데이터 기반 브리핑 생성."""
+async def handle_briefing_analyst(
+    channel_id: int, symbol: str, user_message: str, reply_websocket: Optional[Any] = None
+):
+    """@브리핑 호출 시: DB 컨텍스트 + FMP 에이전트 수집 -> LLM 브리핑 생성.
+    reply_websocket이 있으면 해당 연결에만 전송(개인화). 없으면 채널 전체 broadcast."""
     db = SessionLocal()
     try:
         analyst = _ensure_briefing_analyst_user(db)
@@ -272,18 +275,25 @@ async def handle_briefing_analyst(channel_id: int, symbol: str, user_message: st
             "is_bot": True,
             "user_role": analyst.role.value,
             "created_at": msg.created_at.isoformat(),
+            "is_private": bool(reply_websocket),
         }
-        await manager.broadcast_to_channel(channel_id, payload)
-        print(f"[BRIEFING_ANALYST] {analyst.nickname} replied in channel {channel_id}")
+        if reply_websocket:
+            await manager.send_to_websocket(reply_websocket, payload)
+        else:
+            await manager.broadcast_to_channel(channel_id, payload)
+        print(f"[BRIEFING_ANALYST] {analyst.nickname} replied in channel {channel_id} (private={bool(reply_websocket)})")
     except Exception as e:
         print(f"[BRIEFING_ANALYST] Error: {e}")
     finally:
         db.close()
 
 
-async def handle_stock_command_analyst(channel_id: int, content: str):
+async def handle_stock_command_analyst(
+    channel_id: int, content: str, reply_websocket: Optional[Any] = None
+):
     """
     채팅에서 @종목명 키워드(주가/실적/뉴스) 감지 시: 종목명→티커 해석 후 FMP 데이터 조회해 LLM에 주입해 답변.
+    reply_websocket이 있으면 해당 연결에만 전송(개인화).
     - 주가/가격/얼마 -> FMP Quote
     - 실적/어닝/매출 -> FMP Earnings(Income Statement + Earnings Surprises)
     - 뉴스/소식 -> FMP Stock News
@@ -356,9 +366,13 @@ async def handle_stock_command_analyst(channel_id: int, content: str):
             "is_bot": True,
             "user_role": analyst.role.value,
             "created_at": msg.created_at.isoformat(),
+            "is_private": bool(reply_websocket),
         }
-        await manager.broadcast_to_channel(channel_id, payload)
-        print(f"[STOCK_COMMAND] {analyst.nickname} replied in channel {channel_id} (ticker={ticker}, type={cmd})")
+        if reply_websocket:
+            await manager.send_to_websocket(reply_websocket, payload)
+        else:
+            await manager.broadcast_to_channel(channel_id, payload)
+        print(f"[STOCK_COMMAND] {analyst.nickname} replied in channel {channel_id} (ticker={ticker}, type={cmd}, private={bool(reply_websocket)})")
     except Exception as e:
         print(f"[STOCK_COMMAND] Error: {e}")
     finally:
