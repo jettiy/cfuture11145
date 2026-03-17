@@ -24,8 +24,8 @@ FMP_EARNINGS_URL = "https://financialmodelingprep.com/api/v3/earnings-surprises"
 FMP_SEARCH_NAME_URL = "https://financialmodelingprep.com/stable/search-name"
 # 주요 지수 심볼 (FMP: ^GSPC=S&P500, ^IXIC=Nasdaq, ^DJI=Dow)
 FMP_INDEX_SYMBOLS = ["^GSPC", "^IXIC", "^DJI"]
-# TradingView/앱 심볼 → FMP API 심볼 (지수/ETF)
-FMP_SYMBOL_MAP = {"NQ1!": "^IXIC", "HSI1!": "^HSI", "GOLD": "GLD", "CL1!": "USO"}
+# TradingView/앱 심볼 → FMP API 심볼 (나스닥 선물 NQ1!은 NQUSD로 조회해 데이터 없음 해결)
+FMP_SYMBOL_MAP = {"NQ1!": "NQUSD", "HSI1!": "^HSI", "GOLD": "GCUSD", "CL1!": "CLUSD"}
 # 선물 실시간가: FMP Commodities API (NQUSD, GCUSD, CLUSD) — 유료 플랜
 FMP_COMMODITIES_QUOTE_URL = "https://financialmodelingprep.com/stable/quote"
 FMP_COMMODITY_SYMBOL_MAP = {"NQ1!": "NQUSD", "GOLD": "GCUSD", "CL1!": "CLUSD"}

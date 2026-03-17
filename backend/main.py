@@ -128,12 +128,20 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS: 운영에서는 ALLOWED_ORIGINS(또는 CORS_ORIGINS)로 Vercel/Render 등 실제 도메인만 허용 (쉼표 구분). ["*"] 사용 금지.
+# CORS / WebSocket Origin: api.signalchart.kr 백엔드에 접속하는 프론트 도메인 허용 (403 방지)
 _allowed_origins_env = (os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGINS") or "").strip()
 if _allowed_origins_env:
     _origins = [s.strip() for s in _allowed_origins_env.split(",") if s.strip()]
 else:
-    _origins = ["http://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3001", "http://127.0.0.1:3002"]
+    _origins = [
+        "http://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3001", "http://127.0.0.1:3002",
+        "https://signalchart.kr", "https://www.signalchart.kr",
+    ]
+# 운영에서 추가 도메인만 넣을 때도 signalchart 도메인은 유지되도록 병합
+_extra = ["https://signalchart.kr", "https://www.signalchart.kr"]
+for o in _extra:
+    if o not in _origins:
+        _origins.append(o)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,

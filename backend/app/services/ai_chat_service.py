@@ -237,6 +237,21 @@ async def handle_briefing_analyst(channel_id: int, symbol: str, user_message: st
             context.setdefault("fmp_news_text", "")
             context.setdefault("fmp_key_metrics_text", "")
             print(f"[BRIEFING] FMP agent fetch skip: {e}")
+        # FMP 데이터 한국어 번역 후 컨텍스트에 반영 (한국 트레이더 가독성)
+        try:
+            from app.services.llm_provider import translate_fmp_blob_to_korean
+            for key in ("fmp_quote_text", "fmp_news_text", "fmp_key_metrics_text"):
+                if context.get(key):
+                    context[key] = await translate_fmp_blob_to_korean(context[key])
+        except Exception as e:
+            print(f"[BRIEFING] FMP Korean translate skip: {e}")
+        # 이벤트/최신 뉴스 성격 질문이면 실시간 웹 검색 병행 (GTC 요약 등)
+        try:
+            from app.services.web_search_service import get_web_search_for_briefing
+            context["web_search_text"] = await get_web_search_for_briefing(user_message, symbol)
+        except Exception as e:
+            context.setdefault("web_search_text", "")
+            print(f"[BRIEFING] Web search skip: {e}")
         reply = await briefing_analyst_reply(symbol=symbol, user_message=user_message, context=context)
         msg = Message(
             channel_id=channel_id,
@@ -303,6 +318,12 @@ async def handle_stock_command_analyst(channel_id: int, content: str):
 
     if not (fmp_text or "").strip():
         fmp_text = "[FMP 데이터 없음] 해당 종목/기간 데이터를 불러오지 못했습니다."
+    else:
+        try:
+            from app.services.llm_provider import translate_fmp_blob_to_korean
+            fmp_text = await translate_fmp_blob_to_korean(fmp_text)
+        except Exception:
+            pass
 
     reply = await stock_command_reply(
         symbol=ticker,

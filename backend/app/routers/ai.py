@@ -55,6 +55,20 @@ async def ask_ai(
         context.setdefault("fmp_quote_text", "")
         context.setdefault("fmp_news_text", "")
         context.setdefault("fmp_key_metrics_text", "")
+    # FMP 데이터 한국어 번역
+    try:
+        from app.services.llm_provider import translate_fmp_blob_to_korean
+        for key in ("fmp_quote_text", "fmp_news_text", "fmp_key_metrics_text"):
+            if context.get(key):
+                context[key] = await translate_fmp_blob_to_korean(context[key])
+    except Exception:
+        pass
+    # 이벤트/최신 뉴스 질문이면 웹 검색 병행
+    try:
+        from app.services.web_search_service import get_web_search_for_briefing
+        context["web_search_text"] = await get_web_search_for_briefing(msg, symbol)
+    except Exception:
+        context.setdefault("web_search_text", "")
 
     # 커맨드별로 LLM에 주는 user_message를 살짝 조정
     if body.command == "briefing":

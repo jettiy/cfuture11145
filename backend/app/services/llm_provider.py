@@ -216,6 +216,20 @@ async def translate_to_korean(text: str, context: str = "") -> str:
         # 폴백: 원문 반환 (최소한 표시되도록)
         return text
 
+
+async def translate_fmp_blob_to_korean(text: str, max_chars: int = 1200) -> str:
+    """
+    FMP에서 가져온 영어 데이터 블록을 한국 트레이더용 자연스러운 한국어로 번역.
+    길면 max_chars만 잘라서 번역 (토큰/비용 절감).
+    """
+    if not (text or "").strip():
+        return text or ""
+    t = text.strip()
+    if len(t) > max_chars:
+        t = t[:max_chars] + "\n[...]"
+    return await translate_to_korean(t, "FMP 금융/시장 데이터")
+
+
 async def analyze_sentiment(title: str, summary: str = "") -> str:
     """
     LLM을 사용하여 뉴스의 시장 심리(Sentiment)를 분석
@@ -313,8 +327,9 @@ async def briefing_analyst_reply(
     fmp_quote = (context.get("fmp_quote_text") or "").strip()
     fmp_news = (context.get("fmp_news_text") or "").strip()
     fmp_metrics = (context.get("fmp_key_metrics_text") or "").strip()
+    web_search = (context.get("web_search_text") or "").strip()
 
-    has_any_data = bool(news_list or events_list or releases_list or fmp_quote or fmp_news or fmp_metrics)
+    has_any_data = bool(news_list or events_list or releases_list or fmp_quote or fmp_news or fmp_metrics or web_search)
 
     payload = {
         "symbol": symbol,
@@ -325,6 +340,7 @@ async def briefing_analyst_reply(
         "fmp_quote": fmp_quote,
         "fmp_news": fmp_news,
         "fmp_key_metrics": fmp_metrics,
+        "web_search": web_search,
     }
 
     def _no_data_marker() -> str:
