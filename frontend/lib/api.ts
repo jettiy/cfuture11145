@@ -140,10 +140,10 @@ export const calendarAPI = {
   getNewsSummary: () => api.get('/api/calendar/news-summary'),
   getUpcomingEvents: (hoursAhead = 24, importance = 'high') =>
     api.get('/api/calendar/upcoming', { params: { hours_ahead: hoursAhead, importance } }),
-  /** 지표/일정 통합 보드: economic + custom 한 번에 (시간순) */
-  getBoard: (symbol?: string, hoursAhead = 168, importance = 'low') =>
+  /** 지표/일정 통합 보드. range: 'today' = KST 오늘만, 'week' = 오늘~이번 주 일요일 */
+  getBoard: (symbol?: string, hoursAhead = 168, importance = 'low', range?: 'today' | 'week') =>
     api.get<BoardEventResponse[]>('/api/calendar/board', {
-      params: { symbol, hours_ahead: hoursAhead, importance },
+      params: { symbol, hours_ahead: hoursAhead, importance, range_filter: range },
     }),
 }
 

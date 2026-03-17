@@ -161,6 +161,17 @@ def _kst_today_utc_range():
     return today_start_kst.astimezone(timezone.utc), today_end_kst.astimezone(timezone.utc)
 
 
+def _kst_week_end_utc():
+    """KST 기준 이번 주 일요일 23:59:59.999 를 UTC로 반환 (오늘 포함 ~ 일요일 끝)."""
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst)
+    today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Python weekday: Mon=0 ... Sun=6. 일요일까지 며칠 남았는지
+    days_until_sunday = (6 - now_kst.weekday()) % 7
+    sunday_end_kst = today_start_kst + timedelta(days=days_until_sunday, hours=23, minutes=59, seconds=59)
+    return sunday_end_kst.astimezone(timezone.utc)
+
+
 @router.get("/today-events", response_model=List[CalendarResponse])
 async def get_today_events(
     country: str = "US",
@@ -245,36 +256,72 @@ async def get_calendar_board(
     symbol: Optional[str] = None,
     hours_ahead: int = 168,
     importance: str = "low",
+    range_filter: Optional[str] = None,  # "today" = KST 오늘만, "week" = 오늘 ~ 이번 주 일요일
     db: Session = Depends(get_db),
 ):
     """
-    지표/일정 통합 보드: economic + custom 이벤트를 시간순 하나의 리스트로 반환.
-    UTC 저장 / ISO 문자열로 반환. 프론트에서 로컬 표시.
-    [임시] 필터 전부 해제 — DB 전체 중 최근 50건씩 가져와 화면에 띄우기용.
+    지표/일정 통합 보드: economic + custom 이벤트를 시간순 리스트로 반환.
+    range_filter=today: KST 오늘 00:00~24:00만. range_filter=week: 오늘 ~ 이번 주 일요일 23:59.
     """
-    total_in_db = db.query(EconomicCalendar).count()
-    print(f"[DEBUG-0] 현재 DB 안의 전체 지표 개수: {total_in_db}")
+    today_start_utc, today_end_utc = _kst_today_utc_range()
+    week_end_utc = _kst_week_end_utc()
 
-    # [임시] 모든 시간/조건 필터 해제 — 최근 날짜 기준 50개만 조회
-    # now_utc = datetime.now(timezone.utc)
-    # end_utc = now_utc + timedelta(hours=hours_ahead)
-    # Economic: 조건 없이 최근 scheduled_time 기준 50개
-    economic_events = (
-        db.query(EconomicCalendar)
-        .order_by(EconomicCalendar.scheduled_time.desc())
-        .limit(50)
-        .all()
-    )
-    # 원래: .filter(scheduled_time >= now_utc, <= end_utc, is_released == False, importance.in_(...))
-
-    # Custom: 조건 없이 최근 event_date 기준 50개
-    custom_events = (
-        db.query(CustomEvent)
-        .order_by(CustomEvent.event_date.desc())
-        .limit(50)
-        .all()
-    )
-    # 원래: .filter(event_date >= now_utc, <= end_utc, is_active == True), symbol 필터
+    if (range_filter or "").strip().lower() == "today":
+        # 오늘 일정: KST 오늘 해당만
+        economic_events = (
+            db.query(EconomicCalendar)
+            .filter(
+                EconomicCalendar.scheduled_time >= today_start_utc,
+                EconomicCalendar.scheduled_time < today_end_utc,
+            )
+            .order_by(EconomicCalendar.scheduled_time.asc())
+            .all()
+        )
+        custom_events = (
+            db.query(CustomEvent)
+            .filter(
+                CustomEvent.is_active == True,
+                CustomEvent.event_date >= today_start_utc,
+                CustomEvent.event_date < today_end_utc,
+            )
+            .order_by(CustomEvent.event_date.asc())
+            .all()
+        )
+    elif (range_filter or "").strip().lower() == "week":
+        # 이번 주 일정: 오늘 ~ 이번 주 일요일 23:59
+        economic_events = (
+            db.query(EconomicCalendar)
+            .filter(
+                EconomicCalendar.scheduled_time >= today_start_utc,
+                EconomicCalendar.scheduled_time <= week_end_utc,
+            )
+            .order_by(EconomicCalendar.scheduled_time.asc())
+            .all()
+        )
+        custom_events = (
+            db.query(CustomEvent)
+            .filter(
+                CustomEvent.is_active == True,
+                CustomEvent.event_date >= today_start_utc,
+                CustomEvent.event_date <= week_end_utc,
+            )
+            .order_by(CustomEvent.event_date.asc())
+            .all()
+        )
+    else:
+        # 기본: 최근 50건 (기존 동작)
+        economic_events = (
+            db.query(EconomicCalendar)
+            .order_by(EconomicCalendar.scheduled_time.desc())
+            .limit(50)
+            .all()
+        )
+        custom_events = (
+            db.query(CustomEvent)
+            .order_by(CustomEvent.event_date.desc())
+            .limit(50)
+            .all()
+        )
 
     merged: List[MergedEventResponse] = []
     for e in economic_events:
@@ -314,6 +361,5 @@ async def get_calendar_board(
         ))
 
     merged.sort(key=lambda x: x.scheduled_at)
-    logger.info("[CALENDAR API board] symbol=%s hours_ahead=%s merged_count=%s", symbol, hours_ahead, len(merged))
-    print(f"[DEBUG-3] 프론트로 보내는 최종 데이터 개수: {len(merged)}")
+    logger.info("[CALENDAR API board] symbol=%s range=%s merged_count=%s", symbol, range_filter, len(merged))
     return merged

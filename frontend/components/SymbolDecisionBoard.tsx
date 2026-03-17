@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { calendarAPI } from '@/lib/api'
 import type { BoardEventResponse } from '@/lib/api'
 // 시간/날짜: API(UTC) → KST(Asia/Seoul) 변환 및 오늘·이번주 필터는 @/lib/utils/time (Intl.DateTimeFormat) 사용
-import { formatKSTDateTime, formatKSTTime, getKSTDateString, getTodayKST, getThisWeekKSTSet } from '@/lib/utils/time'
+import { formatKSTDateTime, formatKSTTime } from '@/lib/utils/time'
 
 /** 지표/일정 통합 리스트용 표준 타입 */
 export type MergedEvent = {
@@ -46,7 +46,8 @@ const BOARD_POLL_MS = 60_000
 const INDICATOR_ACTUAL_UPDATE_EVENT = 'indicator_actual_updated'
 
 export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
-  const [mergedEvents, setMergedEvents] = useState<MergedEvent[]>([])
+  const [todayEvents, setTodayEvents] = useState<MergedEvent[]>([])
+  const [weekEvents, setWeekEvents] = useState<MergedEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null)
   const [realtimeRefreshTrigger, setRealtimeRefreshTrigger] = useState(0)
@@ -61,15 +62,21 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
     let alive = true
     const fetchBoard = async () => {
       try {
-        const res = await calendarAPI.getBoard(symbol || undefined, BOARD_HOURS_AHEAD, 'low')
+        const [todayRes, weekRes] = await Promise.all([
+          calendarAPI.getBoard(symbol || undefined, BOARD_HOURS_AHEAD, 'low', 'today'),
+          calendarAPI.getBoard(symbol || undefined, BOARD_HOURS_AHEAD, 'low', 'week'),
+        ])
         if (!alive) return
-        const list = Array.isArray(res?.data) ? res.data : []
-        setMergedEvents(list.map(boardEventToMerged))
+        const todayList = Array.isArray(todayRes?.data) ? todayRes.data : []
+        const weekList = Array.isArray(weekRes?.data) ? weekRes.data : []
+        setTodayEvents(todayList.map(boardEventToMerged).sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()))
+        setWeekEvents(weekList.map(boardEventToMerged).sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()))
         setLastUpdatedAt(new Date().toISOString())
       } catch (e) {
         if (!alive) return
         console.error('[DecisionBoard] Board fetch error:', e)
-        setMergedEvents([])
+        setTodayEvents([])
+        setWeekEvents([])
         setLastUpdatedAt(new Date().toISOString())
       } finally {
         if (!alive) return
@@ -83,26 +90,6 @@ export default function SymbolDecisionBoard({ symbol }: { symbol: string }) {
       clearInterval(interval)
     }
   }, [symbol, realtimeRefreshTrigger])
-
-  /** [디버깅] KST 필터 임시 해제 — 원인 파악 후 복원 */
-  // const todayKST = getTodayKST()
-  // const thisWeekSet = getThisWeekKSTSet()
-
-  /** 오늘 일정: [임시] 필터 해제 — 전체 데이터 시간순 (원래: KST 오늘 + US 경제지표만) */
-  const todayEvents = useMemo(() => {
-    return [...mergedEvents].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-    // return mergedEvents
-    //   .filter((e) => e.type === 'economic' && (e.country === 'US' || !e.country) && getKSTDateString(e.scheduledAt) === todayKST)
-    //   .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-  }, [mergedEvents])
-
-  /** 이번주 일정: [임시] 필터 해제 — 전체 데이터 시간순 (원래: KST 이번주 월~금만) */
-  const weekEvents = useMemo(() => {
-    return [...mergedEvents].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-    // return mergedEvents
-    //   .filter((e) => thisWeekSet.has(getKSTDateString(e.scheduledAt)))
-    //   .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-  }, [mergedEvents])
 
   const isReleased = (e: MergedEvent) => e.actualValue != null && String(e.actualValue).trim() !== ''
 
