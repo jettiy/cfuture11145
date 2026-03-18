@@ -5,6 +5,7 @@ FMP (Financial Modeling Prep) API — 경제 캘린더 + 시장 뉴스 (100% FMP
 """
 import os
 import logging
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -203,10 +204,14 @@ async def fetch_fmp_news() -> int:
         async with httpx.AsyncClient(timeout=15.0) as client:
             # Legacy 차단 회피: stable/news/stock 사용
             r = await client.get(FMP_STOCK_NEWS_URL, params=params, headers=_COMMON_HEADERS)
-        if r.status_code != 200:
-            # 403 등은 운영에서 빈번할 수 있으므로 예외로 올리지 않고 로그만 남김
-            print(f"[FMP] stock_news HTTP error: status={r.status_code}")
-            logger.error("[FMP] stock_news HTTP status=%s body=%s", r.status_code, (r.text or "")[:300])
+        if r.status_code == 403:
+            print(f"[FMP] stock_news 403 Forbidden - API key invalid or symbol encoding issue.")
+            return 0
+        elif r.status_code == 429:
+            print(f"[FMP] stock_news 429 Rate limit. Retry later.")
+            return 0
+        elif r.status_code != 200:
+            print(f"[FMP] stock_news HTTP error: status={r.status_code}, body={r.text[:200]}")
             return 0
         data = r.json()
         raw_list = data if isinstance(data, list) else (data.get("data") or data.get("content") or data.get("articles") or [])
@@ -305,14 +310,21 @@ async def fetch_fmp_indexes() -> int:
         print("[FMP] FMP_API_KEY not set, indexes fetch skipped")
         return 0
     symbols_param = ",".join(FMP_INDEX_SYMBOLS)
-    url = f"{FMP_QUOTE_URL}/{symbols_param}"
+    encoded_symbols = urllib.parse.quote(symbols_param, safe=",")
+    url = f"{FMP_QUOTE_URL}/{encoded_symbols}"
     params = {"apikey": api_key}
     db = SessionLocal()
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(url, params=params)
-        if r.status_code != 200:
-            print(f"[FMP] quotes HTTP error: status={r.status_code}")
+        if r.status_code == 403:
+            print(f"[FMP] quotes 403 Forbidden - API key invalid or symbol encoding issue. URL: {url}")
+            return 0
+        elif r.status_code == 429:
+            print(f"[FMP] quotes 429 Rate limit. Retry later.")
+            return 0
+        elif r.status_code != 200:
+            print(f"[FMP] quotes HTTP error: status={r.status_code}, body={r.text[:200]}")
             return 0
         data = r.json()
         raw_list = data if isinstance(data, list) else []
@@ -440,13 +452,14 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
     if not api_key:
         return ""
     fmp_sym = _fmp_symbol(symbol)
+    fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
     interval = FMP_INTERVAL_MAP.get(timeframe, "daily")
     lines = []
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             # RSI(14)
             r_rsi = await client.get(
-                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
+                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
                 params={"type": "rsi", "period": 14, "apikey": api_key},
             )
             if r_rsi.status_code == 200:
@@ -459,7 +472,7 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
             # EMA 20, 50, 200
             for period in (20, 50, 200):
                 r_ema = await client.get(
-                    f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
+                    f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
                     params={"type": "ema", "period": period, "apikey": api_key},
                 )
                 if r_ema.status_code == 200:
@@ -470,7 +483,7 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
                             lines.append(f"EMA({period}) = {val}")
             # MACD(12,26,9)
             r_macd = await client.get(
-                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
+                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
                 params={"type": "macd", "fast": 12, "slow": 26, "signal": 9, "apikey": api_key},
             )
             if r_macd.status_code == 200:
@@ -496,10 +509,19 @@ async def get_fmp_quote_for_briefing(symbol: str) -> str:
     if not api_key:
         return ""
     fmp_sym = _fmp_symbol(symbol)
+    fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
+    url = f"{FMP_QUOTE_URL}/{fmp_sym_enc}"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{FMP_QUOTE_URL}/{fmp_sym}", params={"apikey": api_key})
+            r = await client.get(url, params={"apikey": api_key})
+        if r.status_code == 403:
+            logger.warning("[FMP] quote for briefing 403 Forbidden - API key invalid or symbol encoding. URL: %s", url)
+            return ""
+        if r.status_code == 429:
+            logger.warning("[FMP] quote for briefing 429 Rate limit.")
+            return ""
         if r.status_code != 200:
+            logger.warning("[FMP] quote for briefing HTTP error: status=%s, body=%s", r.status_code, (r.text or "")[:200])
             return ""
         data = r.json()
         items = data if isinstance(data, list) else []
@@ -612,8 +634,9 @@ async def get_fmp_earnings_for_briefing(symbol: str, limit: int = 4) -> str:
                              f"operatingIncome={operating_income}", f"netIncome={net_income}", f"eps={eps}"]
                     lines.append(f"[분기{i}] " + ", ".join(str(p) for p in parts if p.split("=")[-1] not in ("None", "")))
             # Earnings Surprises (실적 컨센서스 대비)
+            fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
             r_sur = await client.get(
-                f"{FMP_EARNINGS_URL}/{fmp_sym}",
+                f"{FMP_EARNINGS_URL}/{fmp_sym_enc}",
                 params={"apikey": api_key},
             )
             if r_sur.status_code == 200:
