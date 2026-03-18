@@ -16,11 +16,7 @@ CREATE POLICY "users_select_own_or_admin" ON users FOR SELECT
     OR (current_setting('app.is_admin', true) = 'true')
   );
 
-DROP POLICY IF EXISTS "users_update_own_or_admin" ON users FOR UPDATE
-  USING (
-    (current_setting('app.current_user_id', true) IS NOT NULL AND id = current_setting('app.current_user_id', true)::int)
-    OR (current_setting('app.is_admin', true) = 'true')
-  );
+DROP POLICY IF EXISTS "users_update_own_or_admin" ON users;
 
 -- messages: 본인 메시지 또는 봇 메시지(user_id NULL) 또는 admin
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;

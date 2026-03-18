@@ -303,7 +303,7 @@ async def fetch_fmp_news() -> int:
         db.close()
 
 
-async def fetch_fmp_indexes() -> int:
+async def fetch_fmp_indexes() -> List[Dict[str, Any]]:
     """
     FMP Quote API로 주요 지수(나스닥, S&P500, 다우) 수집 → IndexData 테이블 Upsert.
     api/v3/quote 사용. 1분마다 스케줄러에서 호출.
@@ -314,7 +314,7 @@ async def fetch_fmp_indexes() -> int:
     api_key = (os.getenv("FMP_API_KEY") or FMP_API_KEY or "").strip()
     if not api_key:
         print("[FMP] FMP_API_KEY not set, indexes fetch skipped")
-        return 0
+        return []
     symbols_param = ",".join(FMP_INDEX_SYMBOLS)
     url = f"{FMP_QUOTE_URL}/{symbols_param}"
     params = {"apikey": api_key}
@@ -324,18 +324,18 @@ async def fetch_fmp_indexes() -> int:
             r = await client.get(url, params=params)
         if r.status_code == 403:
             print(f"[FMP] quotes 403 Forbidden - API key invalid or symbol encoding issue. URL: {url}")
-            return 0
+            return []
         elif r.status_code == 429:
             print(f"[FMP] quotes 429 Rate limit. Retry later.")
-            return 0
+            return []
         elif r.status_code != 200:
             print(f"[FMP] quotes HTTP error: status={r.status_code}, body={r.text[:200]}")
-            return 0
+            return []
         data = r.json()
         raw_list = data if isinstance(data, list) else []
         if not raw_list:
             print("[FMP] quotes empty")
-            return 0
+            return []
         now_utc = datetime.now(timezone.utc)
         upserted = 0
         for item in raw_list:
@@ -397,12 +397,12 @@ async def fetch_fmp_indexes() -> int:
         db.commit()
         print(f"[FMP Indexes] Successfully upserted {upserted} index quotes")
         logger.info("[FMP] indexes upserted=%s", upserted)
-        return upserted
+        return raw_list
     except Exception as e:
         logger.exception("[FMP] indexes fetch error: %s", e)
         print(f"[FMP] indexes fetch error: {e}")
         db.rollback()
-        return 0
+        return []
     finally:
         db.close()
 
