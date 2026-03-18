@@ -7,6 +7,34 @@ import { ChatWebSocket } from '@/lib/websocket'
 import { formatKSTTime, getNowISOString } from '@/lib/utils/time'
 import { Crown, LockKeyhole } from 'lucide-react'
 
+function UserBadge({ role }: { role?: string | null }) {
+  const r = (role || '').toString().toLowerCase()
+  const isMaster = r === 'admin' || r === 'master'
+  const isPro = r === 'pro'
+
+  if (isMaster) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded ml-2 bg-purple-600 text-white font-bold">
+        MASTER
+      </span>
+    )
+  }
+
+  if (isPro) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded ml-2 bg-yellow-500 text-yellow-900 font-bold">
+        PRO
+      </span>
+    )
+  }
+
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded ml-2 bg-gray-600 text-gray-200">
+      BASIC
+    </span>
+  )
+}
+
 function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   useEffect(() => {
     const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
@@ -69,7 +97,7 @@ export default function ChatPanel({ symbol }: ChatPanelProps) {
   const canUploadImage = isPro() // Pro 또는 Admin만 이미지 업로드
   const canZoomImage = (msg: Message) => {
     const role = (msg.user_role || '').toString().toLowerCase()
-    return role === 'pro' || role === 'admin'
+    return role === 'pro' || role === 'admin' || role === 'master'
   }
 
   const getUserColor = (name: string) => {
@@ -443,11 +471,7 @@ export default function ChatPanel({ symbol }: ChatPanelProps) {
                       <span className={`font-black text-[13px] ${getUserColor(msg.nickname || msg.username || '익명')}`}>
                         {msg.nickname || msg.username || '익명'}
                       </span>
-                      {msg.user_role === 'pro' ? (
-                        <span className="text-[10px] px-1 bg-yellow-500/20 text-yellow-500 rounded border border-yellow-500/30 font-bold">PRO</span>
-                      ) : (
-                        <span className="text-[10px] px-1 bg-gray-500/20 text-gray-400 rounded border border-gray-500/30 font-bold">MEMBER</span>
-                      )}
+                      <UserBadge role={msg.user_role} />
                       <span className="text-[10px] text-gray-500 ml-auto tabular-nums">
                         {(() => {
                           try {
