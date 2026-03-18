@@ -5,7 +5,6 @@ FMP (Financial Modeling Prep) API — 경제 캘린더 + 시장 뉴스 (100% FMP
 """
 import os
 import logging
-import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -25,8 +24,15 @@ FMP_KEY_METRICS_URL = "https://financialmodelingprep.com/api/v3/key-metrics-ttm"
 FMP_INCOME_STATEMENT_URL = "https://financialmodelingprep.com/api/v3/income-statement"
 FMP_EARNINGS_URL = "https://financialmodelingprep.com/api/v3/earnings-surprises"
 FMP_SEARCH_NAME_URL = "https://financialmodelingprep.com/stable/search-name"
-# 주요 지수 심볼 (FMP: ^GSPC=S&P500, ^IXIC=Nasdaq, ^DJI=Dow)
-FMP_INDEX_SYMBOLS = ["^GSPC", "^IXIC", "^DJI"]
+# 주요 지수는 ^심볼 대신 ETF로 조회 (URL path에서 ^가 403을 유발할 수 있어 안전한 심볼로 교체)
+FMP_INDEX_SYMBOLS = ["SPY", "QQQ", "DIA"]
+# ^로 시작하는 지수 심볼을 안전한 대체 심볼로 치환 (가능하면 ETF 사용)
+FMP_CARET_SYMBOL_REPLACEMENTS = {
+    "^GSPC": "SPY",  # S&P500
+    "^IXIC": "QQQ",  # Nasdaq
+    "^DJI": "DIA",   # Dow
+    "^HSI": "EWH",   # Hang Seng (대체: iShares MSCI Hong Kong)
+}
 # TradingView/앱 심볼 → FMP API 심볼 (나스닥 선물 NQ1!은 NQUSD로 조회해 데이터 없음 해결)
 FMP_SYMBOL_MAP = {"NQ1!": "NQUSD", "HSI1!": "^HSI", "GOLD": "GCUSD", "CL1!": "CLUSD"}
 # 선물 실시간가: FMP Commodities API (NQUSD, GCUSD, CLUSD) — 유료 플랜
@@ -310,8 +316,7 @@ async def fetch_fmp_indexes() -> int:
         print("[FMP] FMP_API_KEY not set, indexes fetch skipped")
         return 0
     symbols_param = ",".join(FMP_INDEX_SYMBOLS)
-    encoded_symbols = urllib.parse.quote(symbols_param, safe=",")
-    url = f"{FMP_QUOTE_URL}/{encoded_symbols}"
+    url = f"{FMP_QUOTE_URL}/{symbols_param}"
     params = {"apikey": api_key}
     db = SessionLocal()
     try:
@@ -404,7 +409,11 @@ async def fetch_fmp_indexes() -> int:
 
 def _fmp_symbol(symbol: str) -> str:
     """앱 심볼을 FMP API용 심볼로 변환."""
-    return FMP_SYMBOL_MAP.get(symbol, symbol)
+    s = FMP_SYMBOL_MAP.get(symbol, symbol)
+    # URL path에 ^가 들어가면 403이 날 수 있어, 가능한 경우 안전한 대체 심볼로 교체합니다.
+    if (s or "").startswith("^"):
+        return FMP_CARET_SYMBOL_REPLACEMENTS.get(s, s.lstrip("^"))
+    return s
 
 
 def _fmp_commodity_symbol(symbol: str) -> Optional[str]:
@@ -452,14 +461,13 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
     if not api_key:
         return ""
     fmp_sym = _fmp_symbol(symbol)
-    fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
     interval = FMP_INTERVAL_MAP.get(timeframe, "daily")
     lines = []
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             # RSI(14)
             r_rsi = await client.get(
-                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
+                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
                 params={"type": "rsi", "period": 14, "apikey": api_key},
             )
             if r_rsi.status_code == 200:
@@ -472,7 +480,7 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
             # EMA 20, 50, 200
             for period in (20, 50, 200):
                 r_ema = await client.get(
-                    f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
+                    f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
                     params={"type": "ema", "period": period, "apikey": api_key},
                 )
                 if r_ema.status_code == 200:
@@ -483,7 +491,7 @@ async def get_fmp_technical_facts(symbol: str, timeframe: str) -> str:
                             lines.append(f"EMA({period}) = {val}")
             # MACD(12,26,9)
             r_macd = await client.get(
-                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym_enc}",
+                f"{FMP_TECHNICAL_INDICATOR_BASE}/{interval}/{fmp_sym}",
                 params={"type": "macd", "fast": 12, "slow": 26, "signal": 9, "apikey": api_key},
             )
             if r_macd.status_code == 200:
@@ -509,8 +517,7 @@ async def get_fmp_quote_for_briefing(symbol: str) -> str:
     if not api_key:
         return ""
     fmp_sym = _fmp_symbol(symbol)
-    fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
-    url = f"{FMP_QUOTE_URL}/{fmp_sym_enc}"
+    url = f"{FMP_QUOTE_URL}/{fmp_sym}"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(url, params={"apikey": api_key})
@@ -634,9 +641,8 @@ async def get_fmp_earnings_for_briefing(symbol: str, limit: int = 4) -> str:
                              f"operatingIncome={operating_income}", f"netIncome={net_income}", f"eps={eps}"]
                     lines.append(f"[분기{i}] " + ", ".join(str(p) for p in parts if p.split("=")[-1] not in ("None", "")))
             # Earnings Surprises (실적 컨센서스 대비)
-            fmp_sym_enc = urllib.parse.quote(fmp_sym, safe="")
             r_sur = await client.get(
-                f"{FMP_EARNINGS_URL}/{fmp_sym_enc}",
+                f"{FMP_EARNINGS_URL}/{fmp_sym}",
                 params={"apikey": api_key},
             )
             if r_sur.status_code == 200:
